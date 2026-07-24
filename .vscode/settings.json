@@ -1,0 +1,5 @@
+{
+  "evenBetterToml.schema.associations": {
+    "^(.*[/\\\\])?Cargo\\.toml$": "https://raw.githubusercontent.com/rust-lang/cargo/refs/heads/master/crates/cargo-util-schemas/manifest.schema.json"
+  }
+}

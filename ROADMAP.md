@@ -301,6 +301,23 @@ qualidade do banco — que faz a opção A começar na frente.
 
 ---
 
+## Próxima PR — SonarQube no CI
+
+Combinado em 2026-07-26, **antes da Etapa 7**. O Sonar já está configurado do lado do
+GitHub; o que falta é o repositório.
+
+- [ ] Confirmar SonarQube Cloud × Server, `projectKey` e `organization`
+- [ ] Job no `ci.yml` com `SonarSource/sonarqube-scan-action` e `SONAR_TOKEN` nos secrets
+- [ ] `fetch-depth: 0` no checkout — sem histórico completo o Sonar não calcula *new code*
+- [ ] `sonar-project.properties`: `sonar.sources=crates`, excluindo `target/`, `.sqlx/` e
+      `crates/oxid-web/dist/`
+- [ ] Importar o que já temos em vez de duplicar análise: `cargo clippy
+      --message-format=json` em `sonar.rust.clippy.reportPaths` e LCOV
+      (`cargo llvm-cov`) em `sonar.rust.lcov.reportPaths`
+
+⚠️ O scan em PR de fork esbarra na **mesma falta de secret** do deploy — resolver junto com
+a pendência abaixo, não separado.
+
 ## Pendência de CI — deploy sem secret em PR de fork
 
 **O problema:** o deploy passou a disparar em `pull_request` com `types: [closed]`, para que

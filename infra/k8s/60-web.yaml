@@ -43,24 +43,13 @@ spec:
             requests: { cpu: 10m, memory: 16Mi }
             limits: { memory: 64Mi }
 
+          # The image already runs as 101 and keeps its temp paths under /tmp, so
+          # there is nothing to mount and nothing to chown.
           securityContext:
+            runAsNonRoot: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-
-          # nginx writes its pid and temp files, so the root filesystem cannot be
-          # read-only without mounting these.
-          volumeMounts:
-            - name: cache
-              mountPath: /var/cache/nginx
-            - name: run
-              mountPath: /var/run
-
-      volumes:
-        - name: cache
-          emptyDir: {}
-        - name: run
-          emptyDir: {}
 
 ---
 apiVersion: v1

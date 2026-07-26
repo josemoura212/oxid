@@ -63,7 +63,7 @@ fn App() -> impl IntoView {
 
     view! {
         <main>
-            <h1>"oxid"</h1>
+            <h1>"Oxid"</h1>
 
             <form on:submit=move |ev| {
                 ev.prevent_default();

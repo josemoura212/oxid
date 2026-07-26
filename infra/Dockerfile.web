@@ -26,7 +26,12 @@ RUN trunk build --release --public-url /assets/
 
 # ---
 
-FROM nginx:1.29-alpine
+# `nginx-unprivileged`, not `nginx`: the stock image starts as root and chowns
+# its cache directories to the nginx user. With `capabilities: drop: ALL` in the
+# manifest it loses CAP_CHOWN and dies at boot with "Operation not permitted".
+# This variant runs as uid 101 from the start, keeps its temp paths under /tmp,
+# and listens on 8080 — no privileged port, nothing to chown.
+FROM nginxinc/nginx-unprivileged:1.29-alpine
 
 COPY --from=builder /build/crates/oxid-web/dist /usr/share/nginx/html
 COPY infra/nginx/web.conf /etc/nginx/conf.d/default.conf

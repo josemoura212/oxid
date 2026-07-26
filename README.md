@@ -1,14 +1,12 @@
 # oxid
 
-High-performance URL shortener written in Rust.
+High-performance URL shortener written in Rust. Live at **[oxid.uk](https://oxid.uk)**.
 
 > 🇧🇷 [Leia em português](README-ptbr.md)
 
 The shortener is not the point — **learning Rust and system design under real load
 is**. The project is modelled on a case study that reached ~12,700 req/s
-(100 million URLs per day) with read p95 in single-digit milliseconds. Every
-decision here is written down with its trade-off in
-[`docs/DECISOES.md`](docs/DECISOES.md), including the ones that turned out wrong.
+(100 million URLs per day) with read p95 in single-digit milliseconds.
 
 ## Design targets
 
@@ -39,8 +37,8 @@ Two properties are worth knowing:
 - **Idempotent.** The same long URL always returns the same code, guaranteed by a
   unique constraint in Postgres — not by the application. Concurrent requests for
   the same URL cannot produce two codes.
-- **Immutable.** A code never changes meaning, which is why the cache (stage 5)
-  needs no invalidation.
+- **Immutable.** A code never changes meaning, which is why the cache needs no
+  invalidation and carries no TTL.
 
 ## Stack
 
@@ -48,30 +46,57 @@ Two properties are worth knowing:
 |---|---|
 | HTTP | [Axum](https://github.com/tokio-rs/axum) on Tokio |
 | Database | PostgreSQL 18 via [sqlx](https://github.com/launchbadge/sqlx) (compile-time checked queries) |
-| Cache | Redis, cache-aside with `allkeys-lru` *(stage 5)* |
-| Front end | [Leptos](https://leptos.dev) CSR, compiled to WebAssembly |
+| Cache | Redis, cache-aside with `allkeys-lru`, plus a negative cache |
+| Rate limiting | [`tower_governor`](https://github.com/benwis/tower-governor) on writes only |
+| Front end | [Leptos](https://leptos.dev) CSR compiled to WebAssembly, served by nginx |
 | Config | YAML layers via [`config`](https://github.com/rust-cli/config-rs) + [`secrecy`](https://github.com/iqlusioninc/crates) |
+| Production | k3s on arm64, GitHub Actions, Traefik in front |
 | Observability | `tracing` + Prometheus *(stage 7)* |
-| Load balancer | Nginx *(stage 8)* |
 | Load testing | k6 *(stage 9)* |
+
+Reads are deliberately unlimited: the redirect is the path the cache absorbs and
+the one stages 9–10 push to 11k req/s. Limiting it would punish exactly the
+traffic the system exists to serve.
 
 ## Layout
 
 ```
 crates/
-  oxid-api/       back end: routes, codec, repository, config
+  oxid-api/       back end: routes, codec, repository, cache, config
   oxid-shared/    API contract — types shared by both sides
-  oxid-web/       front end (Leptos, wasm32)
+  oxid-web/       front end (Leptos, wasm32) + subset fonts
 configuration/    base.yaml → <environment>.yaml → APP_* env vars
 migrations/       sqlx migrations
-infra/            docker compose, dev image
-docs/DECISOES.md  decision log (Portuguese)
+infra/            Dockerfiles, compose, nginx, k8s manifests
+.github/          CI (every push and PR) and deploy (main only)
 ```
 
 `oxid-shared` is where full-stack Rust pays off: request and response types live
 in one place, so **changing a field in the back end breaks the front end at
 compile time**. The contract is enforced by the compiler, not by an integration
 test.
+
+> The decision log lives in `docs/DECISOES.md` (Portuguese) and is **not in this
+> repository** — `docs/` is ignored globally on the author's machine. Every
+> decision below is summarised here or in `ROADMAP.md`.
+
+## Front end
+
+One page: paste a URL, get a code. While you type, a meter shows the length
+you are at collapsing onto the seven characters it will become.
+
+Links you create are kept in **`localStorage`**, so closing the tab does not lose
+them. Not a cookie: a cookie for the origin would ride along on every `/{code}`
+redirect, adding bytes to the one path the whole system is tuned around. The list
+never touches the network — which also means it does not follow you to another
+browser or device, and clearing site data clears it.
+
+Removing a link from the list does **not** disable it. Codes are immutable and
+shared: the same long URL yields the same code for everyone, so "deleting" one
+would be deleting someone else's link. It is also why the redirect can be a 301.
+
+The typeface is JetBrains Mono, self-hosted and subset to ASCII plus ten symbols
+— 5 KB per weight, against ~90 KB for the full family.
 
 ## Running it
 
@@ -90,6 +115,7 @@ docker compose --env-file .env \
 | API | http://127.0.0.1:3000 |
 | Front end | http://127.0.0.1:8080 |
 | Postgres | `localhost:5432` |
+| Redis | `localhost:6379` |
 
 Both services hot reload from the host: the source is bind-mounted, `watchexec`
 restarts the API and `trunk` rebuilds the front end. `Ctrl+C` tears everything
@@ -97,7 +123,7 @@ down in well under a second.
 
 ### Without Docker
 
-Postgres still comes from compose; the rest runs natively.
+Postgres and Redis still come from compose; the rest runs natively.
 
 ```bash
 docker compose --env-file .env -f infra/docker-compose.yml up -d
@@ -135,6 +161,9 @@ Answers **301** with the original URL in `Location`. The redirect sits at the
 root on purpose: `/v1/urls/` would spend nine characters on a URL whose entire
 job is being short.
 
+A malformed code answers 404 rather than 400 — separating the two would leak the
+shortcode format to anyone probing the endpoint.
+
 ### `GET /health`
 
 ### Errors
@@ -159,7 +188,7 @@ names would hand out a map of the schema.
 
 ```bash
 # tests (Postgres must be up — each test gets its own temporary database)
-cargo test
+cargo test --workspace --exclude oxid-web
 
 # lint: fmt, back end, and the front end on its wasm target
 cargo fmt --all --check \
@@ -172,7 +201,9 @@ Warnings are errors here. Clippy runs with `pedantic` denied, and `unwrap`,
 tests — every panic has to be a deliberate, argued decision.
 
 The front end needs its own clippy run: lints that only exist on `wasm32` stay
-invisible from the host target.
+invisible from the host target. Both crates are library + binary rather than a
+plain binary, because in a pure binary `unreachable_pub` and `redundant_pub_crate`
+contradict each other.
 
 ### Changing queries
 
@@ -186,6 +217,17 @@ cargo sqlx prepare
 That refreshes `.sqlx/`, which is committed so CI builds without a database
 (`SQLX_OFFLINE=true`).
 
+## Deployment
+
+Every push to `main` builds both images on a **native arm64 runner**, runs the
+migrations as a Kubernetes `Job`, and rolls out API then front end **by digest**
+— never by `latest`, which cannot tell you what is running nor what to roll back
+to. CI itself runs on every pull request.
+
+The cluster is a single-node k3s box (Oracle Ampere, arm64). Traefik runs outside
+the cluster and reaches it over a NodePort. Details in `infra/k8s/README.md`
+(local only, same `docs/` caveat).
+
 ## Roadmap
 
 | Stage | Status |
@@ -194,12 +236,16 @@ That refreshes `.sqlx/`, which is committed so CI builds without a database
 | 2. Base62 + obfuscating bijection | ✅ |
 | 3. Persistence with sqlx | ✅ |
 | 4. Write and read routes | ✅ |
-| 5. Redis cache (cache-aside + negative cache) | |
+| 5. Redis cache (cache-aside + negative cache) | ✅ |
+| 5.1 Saved links in the browser | ✅ |
+| 5.2 Lighthouse fixes | partly — contrast, ARIA and touch targets done |
 | 6. Configuration and pool sizing | ✅ (pulled forward) |
 | 7. Observability (Prometheus + Grafana) | |
 | 8. Full topology (2 instances behind Nginx) | |
 | 9. Load testing with k6 | |
 | 10. Optimization loop to full scale | |
+| 11. Accounts and sessions | |
+| 12. Click analytics | |
 
 Details in [`ROADMAP.md`](ROADMAP.md).
 

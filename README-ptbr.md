@@ -1,14 +1,13 @@
 # oxid
 
-Encurtador de URL de alta performance escrito em Rust.
+Encurtador de URL de alta performance escrito em Rust. No ar em
+**[oxid.uk](https://oxid.uk)**.
 
 > 🇬🇧 [Read in English](README.md)
 
 O encurtador não é o objetivo — **aprender Rust e system design sob carga real
 é**. O projeto se espelha num estudo de caso que atingiu ~12.700 req/s
 (100 milhões de URLs por dia) com p95 de leitura em milissegundos de um dígito.
-Cada decisão está registrada com seu trade-off em
-[`docs/DECISOES.md`](docs/DECISOES.md), inclusive as que se mostraram erradas.
 
 ## Metas de projeto
 
@@ -40,8 +39,8 @@ Duas propriedades valem saber:
 - **Idempotente.** A mesma URL longa sempre devolve o mesmo código, garantido por
   unique constraint no Postgres — não pela aplicação. Requisições concorrentes
   para a mesma URL não conseguem gerar dois códigos.
-- **Imutável.** Um código nunca muda de significado, e é por isso que o cache
-  (etapa 5) não precisa de invalidação.
+- **Imutável.** Um código nunca muda de significado, e é por isso que o cache não
+  precisa de invalidação nem carrega TTL.
 
 ## Stack
 
@@ -49,30 +48,58 @@ Duas propriedades valem saber:
 |---|---|
 | HTTP | [Axum](https://github.com/tokio-rs/axum) sobre Tokio |
 | Banco | PostgreSQL 18 via [sqlx](https://github.com/launchbadge/sqlx) (queries checadas em compile-time) |
-| Cache | Redis, cache-aside com `allkeys-lru` *(etapa 5)* |
-| Front | [Leptos](https://leptos.dev) CSR, compilado para WebAssembly |
+| Cache | Redis, cache-aside com `allkeys-lru`, mais cache negativo |
+| Rate limit | [`tower_governor`](https://github.com/benwis/tower-governor), só na escrita |
+| Front | [Leptos](https://leptos.dev) CSR compilado para WebAssembly, servido por nginx |
 | Config | Camadas YAML via [`config`](https://github.com/rust-cli/config-rs) + [`secrecy`](https://github.com/iqlusioninc/crates) |
+| Produção | k3s em arm64, GitHub Actions, Traefik na frente |
 | Observabilidade | `tracing` + Prometheus *(etapa 7)* |
-| Balanceador | Nginx *(etapa 8)* |
 | Teste de carga | k6 *(etapa 9)* |
+
+Leitura é ilimitada de propósito: o redirect é o caminho que o cache absorve e o
+que as etapas 9-10 empurram a 11k req/s. Limitá-lo puniria exatamente o tráfego
+que o sistema existe para servir.
 
 ## Estrutura
 
 ```
 crates/
-  oxid-api/       back: rotas, codec, repositório, config
+  oxid-api/       back: rotas, codec, repositório, cache, config
   oxid-shared/    contrato da API — tipos compartilhados pelos dois lados
-  oxid-web/       front (Leptos, wasm32)
+  oxid-web/       front (Leptos, wasm32) + fontes subsetadas
 configuration/    base.yaml → <ambiente>.yaml → variáveis APP_*
 migrations/       migrations do sqlx
-infra/            docker compose, imagem de desenvolvimento
-docs/DECISOES.md  registro de decisões
+infra/            Dockerfiles, compose, nginx, manifests do k8s
+.github/          CI (todo push e PR) e deploy (só na main)
 ```
 
 O `oxid-shared` é onde Rust full-stack se paga: os tipos de request e response
 vivem num lugar só, então **mudar um campo no back quebra o front em tempo de
 compilação**. O contrato é garantido pelo compilador, não por teste de
 integração.
+
+> O registro de decisões vive em `docs/DECISOES.md` e **não está neste
+> repositório** — `docs/` é ignorado globalmente na máquina do autor. Todas as
+> decisões estão resumidas aqui ou no `ROADMAP.md`.
+
+## Front
+
+Uma página: cola uma URL, recebe um código. Enquanto você digita, um medidor
+mostra o tamanho atual colapsando sobre os sete caracteres em que ele vai virar.
+
+Os links criados ficam no **`localStorage`**, então fechar a aba não perde nada.
+Não é cookie: um cookie do domínio viajaria em toda requisição, inclusive em cada
+redirect `/{code}` — bytes a mais justamente no caminho em torno do qual o
+sistema inteiro é ajustado. A lista nunca toca a rede, o que também significa que
+ela não acompanha outro navegador ou aparelho, e limpar os dados do site a apaga.
+
+Remover um link da lista **não** o desativa. Códigos são imutáveis e
+compartilhados: a mesma URL longa gera o mesmo código para todo mundo, então
+"apagar" seria apagar o link de outra pessoa. É também o que permite o redirect
+ser 301.
+
+A tipografia é JetBrains Mono, self-hosted e subsetada para ASCII mais dez
+símbolos — 5 KB por peso, contra ~90 KB da família completa.
 
 ## Rodando
 
@@ -91,6 +118,7 @@ docker compose --env-file .env \
 | API | http://127.0.0.1:3000 |
 | Front | http://127.0.0.1:8080 |
 | Postgres | `localhost:5432` |
+| Redis | `localhost:6379` |
 
 Os dois serviços fazem hot reload a partir do host: o fonte vem por bind mount, o
 `watchexec` reinicia a API e o `trunk` recompila o front. `Ctrl+C` derruba tudo em
@@ -98,7 +126,7 @@ bem menos de um segundo.
 
 ### Sem Docker
 
-O Postgres continua vindo do compose; o resto roda nativo.
+Postgres e Redis continuam vindo do compose; o resto roda nativo.
 
 ```bash
 docker compose --env-file .env -f infra/docker-compose.yml up -d
@@ -136,6 +164,9 @@ Responde **301** com a URL original no `Location`. O redirect fica na raiz de
 propósito: `/v1/urls/` gastaria nove caracteres numa URL cujo trabalho inteiro é
 ser curta.
 
+Código malformado responde 404, não 400 — separar os dois vazaria o formato do
+shortcode para quem sondasse o endpoint.
+
 ### `GET /health`
 
 ### Erros
@@ -160,7 +191,7 @@ coluna e constraint entregariam um mapa do schema.
 
 ```bash
 # testes (Postgres precisa estar no ar — cada teste ganha um banco temporário)
-cargo test
+cargo test --workspace --exclude oxid-web
 
 # lint: fmt, back, e o front no target wasm
 cargo fmt --all --check \
@@ -173,7 +204,9 @@ Warning aqui é erro. O clippy roda com `pedantic` em deny, e `unwrap`, `expect`
 panic precisa ser decisão deliberada e justificada.
 
 O front exige rodada própria do clippy: lints que só existem em `wasm32` ficam
-invisíveis a partir do target do host.
+invisíveis a partir do target do host. Os dois crates são lib + binário em vez de
+binário puro, porque num binário puro `unreachable_pub` e `redundant_pub_crate` se
+contradizem.
 
 ### Mudando queries
 
@@ -187,6 +220,17 @@ cargo sqlx prepare
 Isso atualiza o `.sqlx/`, que é versionado para o CI compilar sem banco
 (`SQLX_OFFLINE=true`).
 
+## Deploy
+
+Todo push na `main` builda as duas imagens num **runner arm64 nativo**, roda as
+migrations como `Job` do Kubernetes e faz o rollout da API e depois do front
+**por digest** — nunca por `latest`, que não diz o que está rodando nem para onde
+voltar. O CI roda em todo pull request.
+
+O cluster é um k3s de nó único (Oracle Ampere, arm64). O Traefik roda fora do
+cluster e alcança o nó por NodePort. Detalhes em `infra/k8s/README.md` (local,
+mesma ressalva do `docs/`).
+
 ## Roadmap
 
 | Etapa | Status |
@@ -195,12 +239,16 @@ Isso atualiza o `.sqlx/`, que é versionado para o CI compilar sem banco
 | 2. Base62 + bijeção ofuscadora | ✅ |
 | 3. Persistência com sqlx | ✅ |
 | 4. Rotas de escrita e leitura | ✅ |
-| 5. Cache Redis (cache-aside + cache negativo) | |
+| 5. Cache Redis (cache-aside + cache negativo) | ✅ |
+| 5.1 Links salvos no navegador | ✅ |
+| 5.2 Acertos do Lighthouse | parcial — contraste, ARIA e alvos de toque prontos |
 | 6. Configuração e dimensionamento | ✅ (antecipada) |
 | 7. Observabilidade (Prometheus + Grafana) | |
 | 8. Topologia completa (2 instâncias atrás do Nginx) | |
 | 9. Teste de carga com k6 | |
 | 10. Ciclo de otimização até escala total | |
+| 11. Contas e sessão | |
+| 12. Analytics de clique | |
 
 Detalhes em [`ROADMAP.md`](ROADMAP.md).
 

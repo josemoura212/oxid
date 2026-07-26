@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oxid-config
+  namespace: oxid
+data:
+  # Overrides on top of configuration/production.yaml, which ships in the image.
+  # `__` maps nesting: APP_DATABASE__HOST feeds database.host.
+  APP_ENVIRONMENT: "production"
+  APP_DATABASE__HOST: "postgres.oxid.svc.cluster.local"
+  APP_DATABASE__PORT: "5432"
+  # In-cluster traffic never leaves the node, and Postgres here has no TLS
+  # configured. Turn this on the day the database moves off-cluster.
+  APP_DATABASE__REQUIRE_SSL: "false"
+  APP_APPLICATION__BASE_URL: "https://oxid.uk"
+  APP_CACHE__HOST: "redis.oxid.svc.cluster.local"
+  APP_CACHE__PORT: "6379"
+  RUST_LOG: "oxid=info,tower_http=info,warn"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: oxid
+spec:
+  # Two replicas from the start: the point of the exercise is load, and this is
+  # what proves nothing in the application holds local state.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/josemoura212/oxid:latest
+          imagePullPolicy: Always
+
+          envFrom:
+            - configMapRef:
+                name: oxid-config
+
+          env:
+            - name: APP_DATABASE__USERNAME
+              valueFrom:
+                secretKeyRef: { name: oxid-db, key: username }
+            - name: APP_DATABASE__PASSWORD
+              valueFrom:
+                secretKeyRef: { name: oxid-db, key: password }
+            - name: APP_DATABASE__DATABASE_NAME
+              valueFrom:
+                secretKeyRef: { name: oxid-db, key: database }
+
+          ports:
+            - containerPort: 3000
+              name: http
+
+          # AppState::connect opens the pool before binding, so a listening port
+          # already means Postgres answered.
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+
+          # No CPU limit on purpose: a limit throttles instead of queueing, which
+          # shows up as latency with no visible cause. The request is what the
+          # scheduler uses; the limit would only hurt under the peaks we want to
+          # measure in stage 9.
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { memory: 256Mi }
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: oxid
+spec:
+  # NodePort because Traefik runs outside the cluster (Coolify, in Docker) and
+  # reaches the node through host.docker.internal. 30091 is the next one free —
+  # 30088, 30089 and 30090 are taken.
+  type: NodePort
+  selector:
+    app: api
+  ports:
+    - port: 3000
+      targetPort: http
+      nodePort: 30091

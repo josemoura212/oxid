@@ -1,0 +1,89 @@
+# StatefulSet, not Deployment: the pod needs a stable identity and a volume that
+# survives rescheduling. A Deployment could start a second pod against the same
+# PVC during a rollout and corrupt the data directory.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: oxid
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:18-alpine
+
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: oxid-db, key: username }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: oxid-db, key: password }
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef: { name: oxid-db, key: database }
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF8 --locale=C"
+            # The image mounts at the root on 18+ and picks its own subdirectory
+            # per major version; PGDATA has to agree or initdb refuses to start.
+            - name: PGDATA
+              value: /var/lib/postgresql/18/docker
+
+          ports:
+            - containerPort: 5432
+              name: postgres
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "oxid", "-d", "oxid"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "oxid", "-d", "oxid"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: oxid
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

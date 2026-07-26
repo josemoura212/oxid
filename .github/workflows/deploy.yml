@@ -69,7 +69,7 @@ jobs:
       - uses: azure/setup-kubectl@v4
 
       # A kubeconfig for a ServiceAccount scoped to the `oxid` namespace — not
-      # the cluster admin one. See docs/k3s/README.md for how it is minted.
+      # the cluster admin one. See infra/k8s/README.md for how it is minted.
       - name: Configure kubectl
         env:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
@@ -89,7 +89,7 @@ jobs:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE }}@${{ needs.build.outputs.digest }}
         run: |
           kubectl -n oxid delete job oxid-migrate --ignore-not-found --wait=true
-          sed "s|IMAGE_REF|${IMAGE_REF}|" docs/k3s/50-migrate-job.yaml | kubectl apply -f -
+          sed "s|IMAGE_REF|${IMAGE_REF}|" infra/k8s/50-migrate-job.yaml | kubectl apply -f -
 
           # `wait` errors out if the Job fails, so watch for either outcome and
           # surface the logs — a silent timeout says nothing about what broke.

@@ -1,0 +1,64 @@
+# Deployment, not StatefulSet: every entry is reconstructible from Postgres, so
+# losing the cache costs latency, never data. No PVC, no persistence.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: oxid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:8-alpine
+
+          # Eviction is Redis's job: the cache writes every miss with no TTL, and
+          # `maxmemory` + `allkeys-lru` is what keeps that bounded. `--save ""`
+          # and `--appendonly no` drop persistence we do not want paying for.
+          args:
+            - redis-server
+            - --maxmemory
+            - 512mb
+            - --maxmemory-policy
+            - allkeys-lru
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+
+          ports:
+            - containerPort: 6379
+              name: redis
+
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+
+          # The memory limit sits above maxmemory on purpose: Redis accounts only
+          # for the dataset, and fragmentation plus buffers live outside that
+          # number. Setting them equal invites the OOM killer.
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 768Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: oxid
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

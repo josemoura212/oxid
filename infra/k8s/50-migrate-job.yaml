@@ -1,0 +1,49 @@
+# Migration Job. The deploy workflow substitutes IMAGE_REF and applies this.
+#
+# A manifest rather than `kubectl create job --image=...` because the migration
+# needs the same configuration as the API — ConfigMap plus database Secret — and
+# the imperative form has no way to attach either.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: oxid-migrate
+  namespace: oxid
+spec:
+  # Migrations are idempotent (sqlx tracks what ran) so a retry is safe, but
+  # three failures in a row means something a retry will not fix.
+  backoffLimit: 3
+  # Clean up on its own; the deploy only needs the exit status.
+  ttlSecondsAfterFinished: 300
+
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: IMAGE_REF
+          command: ["/usr/local/bin/oxid-migrate"]
+
+          envFrom:
+            - configMapRef:
+                name: oxid-config
+
+          env:
+            - name: APP_DATABASE__USERNAME
+              valueFrom:
+                secretKeyRef: { name: oxid-db, key: username }
+            - name: APP_DATABASE__PASSWORD
+              valueFrom:
+                secretKeyRef: { name: oxid-db, key: password }
+            - name: APP_DATABASE__DATABASE_NAME
+              valueFrom:
+                secretKeyRef: { name: oxid-db, key: database }
+
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { memory: 128Mi }
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

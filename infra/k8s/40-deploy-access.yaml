@@ -1,0 +1,63 @@
+# Credentials for the GitHub Actions deploy job.
+#
+# A ServiceAccount scoped to this namespace, not the cluster-admin kubeconfig.
+# The token ends up in a GitHub secret, so it should be able to do exactly one
+# thing: roll out this application. Leaking it must not cost the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployer
+  namespace: oxid
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployer
+  namespace: oxid
+rules:
+  # Update the image and watch the rollout.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list"]
+
+  # Migration Job: recreated on every deploy, and waited on.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+
+  # Pods for the migration logs and the smoke test.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer
+  namespace: oxid
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: deployer
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: oxid
+
+---
+# Kubernetes 1.24+ stopped minting Secrets for ServiceAccounts automatically.
+# This one is long-lived on purpose: a `kubectl create token` expires, and a
+# deploy pipeline cannot renew its own credential.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: deployer-token
+  namespace: oxid
+  annotations:
+    kubernetes.io/service-account.name: deployer
+type: kubernetes.io/service-account-token

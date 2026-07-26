@@ -1,0 +1,30 @@
+# Traefik dynamic configuration — paste into Coolify under
+# Servers → Proxy → Dynamic Configurations, as a file named `oxid.yaml`.
+#
+# This does NOT go into the cluster. Traefik runs outside k3s, in Docker managed
+# by Coolify, and reaches the node through host.docker.internal on the NodePort.
+#
+# `certResolver: letsencrypt`, same as sensor.mangatrix.net — which also sits
+# behind the Cloudflare proxy and renews fine, so the ACME HTTP-01 challenge does
+# reach the origin through it.
+#
+# Preferred over the Cloudflare Origin Certificate in `cert.yaml` for one reason:
+# an Origin Certificate is only trusted by Cloudflare, so it forces the orange
+# cloud to stay ON. Stages 9 and 10 will want it OFF — the Cloudflare cache and
+# rate limiting would otherwise be what k6 measures.
+
+http:
+  routers:
+    oxid:
+      rule: Host(`oxid.uk`) || Host(`www.oxid.uk`)
+      entryPoints:
+        - https
+      service: oxid
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    oxid:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:30091"

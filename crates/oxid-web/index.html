@@ -3,11 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>oxid</title>
+    <title>Oxid</title>
     <meta name="description" content="High-performance URL shortener in Rust" />
     <meta name="theme-color" content="#d4693a" />
     <link data-trunk rel="icon" href="favicon.svg" type="image/svg+xml" />
-    <link data-trunk rel="rust" data-wasm-opt="z" />
+    <!--
+      wasm-opt is off: the binaryen build trunk downloads (version 123) exits 1
+      on arm64, and the apt package is 108 — trunk ignores the one on PATH and
+      always uses its own. Losing -Oz makes the bundle bigger, but nginx gzips it
+      on the way out, so the wire cost is much smaller than the file size
+      suggests. Worth revisiting when trunk ships a working arm64 binary.
+    -->
+    <link data-trunk rel="rust" data-wasm-opt="0" />
     <link data-trunk rel="css" href="style.css" />
   </head>
   <body></body>

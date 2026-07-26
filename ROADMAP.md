@@ -70,6 +70,21 @@ Legenda: 🎯 = critério de aceite | 🦀 = conceito de Rust a dominar nesta et
 🎯 Teste da corrida: escrita concorrente positiva nunca é sobrescrita por negativa.
 🦀 Traits de cliente async, serialização para o cache, TTL condicional.
 
+## Etapa 5.1 — "Minhas URLs" sem login (só front)
+
+- [ ] `localStorage` guarda os códigos criados neste browser
+- [ ] Listar com destino e link curto; ação de **remover da lista**
+- [ ] Deixar explícito na UI: salvo só neste navegador, e remover não desativa o link
+
+🎯 Fechar o browser e voltar mantém a lista; limpar dados do site zera.
+🦀 Persistência no browser via `web-sys`, estado derivado com signals do Leptos.
+
+**Por que não tem back:** o código é imutável, e é isso que sustenta o cache sem TTL
+(Etapa 5) e o 301. Exclusão real exigiria invalidar o Redis e trocar 301 por 302 —
+e nem assim funcionaria, porque um 301 já cacheado no browser redireciona para sempre.
+Além disso a idempotência é global: o mesmo código pode ter sido criado por várias
+pessoas, então apagar seria apagar o link de outro. Ver `docs/DECISOES.md`.
+
 ## Etapa 6 — Configuração e dimensionamento
 
 - [ ] Toda config via env: porta, DATABASE_URL, REDIS_URL, tamanho do pool

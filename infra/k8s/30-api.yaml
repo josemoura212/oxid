@@ -63,6 +63,13 @@ spec:
           ports:
             - containerPort: 3000
               name: http
+            # Declared, but deliberately absent from the Service below: metrics
+            # are reachable pod-to-pod inside the cluster and never through the
+            # NodePort that Traefik forwards. Publishing them would put request
+            # volumes, latency distributions and cache behaviour on the open
+            # internet.
+            - containerPort: 9090
+              name: metrics
 
           # AppState::connect opens the pool before binding, so a listening port
           # already means Postgres answered.

@@ -72,17 +72,25 @@ impl Cache {
             }
         };
 
+        // The counter carries the same three outcomes as the log line, as one
+        // label. A log answers "what happened to this code"; the counter answers
+        // "what is the hit rate right now", which is the number that decides
+        // whether the cache is doing its job — the original study only found out
+        // it was at 50% after the fact.
         match value {
             None => {
                 tracing::debug!(code, cache = "miss", "cache lookup");
+                metrics::counter!("cache_lookups_total", "outcome" => "miss").increment(1);
                 None
             }
             Some(value) if value == MISSING => {
                 tracing::debug!(code, cache = "hit_negative", "cache lookup");
+                metrics::counter!("cache_lookups_total", "outcome" => "hit_negative").increment(1);
                 Some(Cached::Missing)
             }
             Some(url) => {
                 tracing::debug!(code, cache = "hit", "cache lookup");
+                metrics::counter!("cache_lookups_total", "outcome" => "hit").increment(1);
                 Some(Cached::Url(url))
             }
         }

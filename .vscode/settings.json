@@ -5,5 +5,23 @@
   // editor dumps the entire manifest as one error. Cargo itself accepts it:
   // `cargo metadata` resolves the workspace without complaint. No point keeping a
   // validator that is wrong about the thing it validates.
-  "evenBetterToml.schema.enabled": false
+  "evenBetterToml.schema.enabled": false,
+
+  // Separate build directory for rust-analyzer. Sharing `target/` with the
+  // terminal means both block on the same file lock, and while it waits the
+  // analyzer answers from a stale index — which surfaces as errors on code that
+  // compiles fine (a signature change reported as E0107, for instance).
+  "rust-analyzer.cargo.targetDir": true,
+
+  // The sqlx macros validate SQL against a live database at expansion time.
+  // Offline mode makes the analyzer read the committed .sqlx cache instead, so
+  // it does not need Postgres running to stop reporting phantom errors.
+  "rust-analyzer.cargo.extraEnv": {
+    "SQLX_OFFLINE": "true"
+  },
+
+  // The front end only type-checks on its own target; without this the analyzer
+  // evaluates `oxid-web` for the host and flags wasm-only APIs as missing.
+  "rust-analyzer.cargo.allTargets": true,
+  "rust-analyzer.check.command": "clippy"
 }

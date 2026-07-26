@@ -150,3 +150,44 @@ Traefik não, é proxy; se o Traefik responde e o domínio não, é Cloudflare.
 - **Rate limit e `X-Forwarded-For`.** Com Cloudflare + Traefik, o header chega
   com uma cadeia de IPs. Vale conferir que o primeiro é mesmo o do cliente, ou o
   limite passa a valer por proxy.
+
+## Estado atual (2026-07-26)
+
+Tudo no ar em `https://oxid.uk`:
+
+| Serviço | NodePort | Imagem |
+|---|---|---|
+| api | 30091 | `ghcr.io/josemoura212/oxid` |
+| web | 30092 | `ghcr.io/josemoura212/oxid-web` |
+| postgres | — | `postgres:18-alpine` |
+| redis | — | `redis:8-alpine` |
+
+Deploy automático a cada push na `main`. As duas imagens são construídas em
+paralelo num runner **arm64 nativo** (`ubuntu-24.04-arm`) — o nó é Oracle Ampere,
+e emular com QEMU custava 2-3x o tempo.
+
+### O que só precisa ser feito uma vez
+
+Já está feito, mas fica registrado para recriar o ambiente:
+
+```bash
+kubectl apply -f infra/k8s/00-namespace.yaml
+kubectl apply -f infra/k8s/40-deploy-access.yaml
+./infra/k8s/mint-kubeconfig.sh          # → secret KUBECONFIG no GitHub
+
+kubectl -n oxid create secret generic oxid-db \
+  --from-literal=username=oxid --from-literal=database=oxid \
+  --from-literal=password="$(openssl rand -hex 24)"
+
+kubectl apply -f infra/k8s/10-postgres.yaml
+kubectl apply -f infra/k8s/20-redis.yaml
+kubectl apply -f infra/k8s/30-api.yaml
+kubectl apply -f infra/k8s/60-web.yaml
+```
+
+Os pacotes no GHCR nascem privados — marcar `oxid` e `oxid-web` como públicos, ou
+o cluster não consegue baixar.
+
+O workflow usa `kubectl set image`, que troca **só a imagem**. Mudou qualquer
+outra coisa no manifest (probe, recursos, securityContext), precisa de
+`kubectl apply` manual.

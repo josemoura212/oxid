@@ -1,5 +1,16 @@
 name: Deploy
 
+# Push to main, which in practice means "a pull request was merged" — the branch
+# ruleset is what makes that the only way main moves.
+#
+# Deliberately not `pull_request: [closed]`, which was tried and reverted: runs
+# from a fork receive no secrets, so a merged community PR would fail on a
+# missing KUBECONFIG. A push event runs in the base repository and always has
+# them.
+#
+# What keeps an admin-bypass push from shipping unreviewed is not the trigger,
+# it is the `production` environment on the deploy job below: with required
+# reviewers configured, the job waits for a human either way.
 on:
   push:
     branches: [main]

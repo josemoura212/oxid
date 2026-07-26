@@ -29,6 +29,10 @@ redis = { version = "1.4.1", default-features = false, features = [
 ] }
 console_error_panic_hook = "0.1.7"
 gloo-net = { version = "0.7.0", features = ["http"] }
+gloo-storage = "0.4.0"
+# Only what the copy button needs. web-sys gates every browser API behind its
+# own feature, and the default set is empty on purpose.
+web-sys = { version = "0.3.103", features = ["Clipboard", "Navigator", "Window"] }
 http-body-util = "0.1.3"
 leptos = "0.8.20"
 secrecy = { version = "0.10.3", features = ["serde"] }

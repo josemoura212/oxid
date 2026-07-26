@@ -16,6 +16,15 @@
     -->
     <link data-trunk rel="rust" data-wasm-opt="0" />
     <link data-trunk rel="css" href="style.css" />
+    <!--
+      copy-dir does not fingerprint what it copies, and nginx serves everything
+      under /assets/ as immutable for a year. The version lives in the filename
+      so replacing the typeface later cannot serve a stale cached file.
+
+      Both weights are subset to ASCII plus ten symbols: 5 KB each, against
+      ~90 KB for the full family.
+    -->
+    <link data-trunk rel="copy-dir" href="fonts" />
   </head>
   <body></body>
 </html>

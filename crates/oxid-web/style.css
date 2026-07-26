@@ -101,6 +101,35 @@ body {
   color: var(--accent-text);
 }
 
+.langs {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.lang {
+  min-width: 2.25rem;
+  min-height: 2rem;
+  padding-inline: 0.4rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--muted);
+  font: 0.75rem/1 var(--mono);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.lang:hover {
+  color: var(--fg);
+}
+
+/* The active language is stated by colour and weight rather than a filled
+   background: it is a label of current state, not an action to take. */
+.lang.is-active {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
 /* Stage */
 
 .thesis {

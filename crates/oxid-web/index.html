@@ -1,10 +1,21 @@
 <!doctype html>
-<html lang="en">
+<!--
+  pt-BR is the default, so it is what the static document declares. This file is
+  what crawlers read and what paints before the wasm mounts; declaring `en` here
+  and switching afterwards would mean announcing the wrong language to a screen
+  reader for exactly as long as the bundle takes to load.
+
+  `Locale::resolve` overrides both attributes once it knows better.
+-->
+<html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Oxid</title>
-    <meta name="description" content="High-performance URL shortener in Rust" />
+    <meta
+      name="description"
+      content="Encurtador de URL de alta performance em Rust"
+    />
     <meta name="theme-color" content="#d4693a" />
     <link data-trunk rel="icon" href="favicon.svg" type="image/svg+xml" />
     <!--

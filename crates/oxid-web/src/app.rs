@@ -1,33 +1,78 @@
 use leptos::prelude::*;
 use oxid_shared::ShortenResponse;
 
-use crate::{api, storage, storage::SavedLink};
+use crate::{
+    api,
+    i18n::Locale,
+    storage::{self, SavedLink},
+};
 
 /// Length of every code the API issues. The meter shows it as the target from
 /// the first keystroke, so the page states the promise instead of waiting for a
 /// response to reveal it.
 const CODE_LEN: usize = 7;
 
-/// Holds only what both halves of the page need: the list and the one message
-/// that has to survive a failed write.
 #[component]
 pub fn App() -> impl IntoView {
+    let locale = RwSignal::new(Locale::resolve());
     let links = RwSignal::new(storage::load());
-    let (storage_error, set_storage_error) = signal(Option::<String>::None);
+    // A flag, not a message: the text has to follow the language, and a string
+    // stored at failure time would stay in whatever locale was active then.
+    let storage_failed = RwSignal::new(false);
+
+    // The served HTML is always `lang="en"` — it is a static file. Screen
+    // readers pick pronunciation from this attribute, so it has to be corrected
+    // once the app knows better.
+    Effect::new(move |_| apply_to_document(locale.get()));
 
     view! {
         <div class="shell">
             <header class="masthead">
                 <span class="wordmark">"Oxid"</span>
+                <LanguagePicker locale=locale />
             </header>
 
-            <Shortener links=links set_storage_error=set_storage_error />
+            <Shortener links=links storage_failed=storage_failed locale=locale.into() />
 
             <Vault
                 links=links
-                storage_error=storage_error
-                set_storage_error=set_storage_error
+                storage_failed=storage_failed
+                locale=locale.into()
             />
+        </div>
+    }
+}
+
+#[component]
+fn LanguagePicker(locale: RwSignal<Locale>) -> impl IntoView {
+    let options = [Locale::En, Locale::PtBr];
+
+    view! {
+        <div
+            class="langs"
+            role="group"
+            aria-label=move || locale.get().strings().language_group
+        >
+            {options
+                .into_iter()
+                .map(|option| {
+                    let active = move || locale.get() == option;
+                    view! {
+                        <button
+                            class="lang"
+                            type="button"
+                            class:is-active=active
+                            aria-pressed=move || if active() { "true" } else { "false" }
+                            on:click=move |_| {
+                                locale.set(option);
+                                option.remember();
+                            }
+                        >
+                            {option.label()}
+                        </button>
+                    }
+                })
+                .collect_view()}
         </div>
     }
 }
@@ -35,7 +80,8 @@ pub fn App() -> impl IntoView {
 #[component]
 fn Shortener(
     links: RwSignal<Vec<SavedLink>>,
-    set_storage_error: WriteSignal<Option<String>>,
+    storage_failed: RwSignal<bool>,
+    locale: Signal<Locale>,
 ) -> impl IntoView {
     let (url, set_url) = signal(String::new());
     let (copied, set_copied) = signal(false);
@@ -51,7 +97,7 @@ fn Shortener(
         if let Some(Ok(response)) = action.value().get() {
             set_copied.set(false);
             links.update(|list| storage::prepend(list, SavedLink::from(response)));
-            persist(links, set_storage_error);
+            persist(links, storage_failed);
         }
     });
 
@@ -61,7 +107,8 @@ fn Shortener(
     view! {
         <main class="stage">
             <h1 class="thesis">
-                "Long links in. " <span class="thesis-turn">"Seven characters out."</span>
+                {move || locale.get().strings().thesis_lead}
+                <span class="thesis-turn">{move || locale.get().strings().thesis_turn}</span>
             </h1>
 
             <form
@@ -72,7 +119,7 @@ fn Shortener(
                 }
             >
                 <label class="visually-hidden" for="long-url">
-                    "Long URL"
+                    {move || locale.get().strings().url_label}
                 </label>
                 <input
                     id="long-url"
@@ -81,19 +128,27 @@ fn Shortener(
                     required
                     autocomplete="off"
                     spellcheck="false"
-                    placeholder="https://example.com/a/very/long/url"
+                    placeholder=move || locale.get().strings().url_placeholder
                     prop:value=url
                     on:input:target=move |ev| set_url.set(ev.target().value())
                 />
                 <button class="composer-submit" type="submit" disabled=pending>
-                    {move || if pending.get() { "Shortening" } else { "Shorten" }}
+                    {move || {
+                        let strings = locale.get().strings();
+                        if pending.get() { strings.shortening } else { strings.shorten }
+                    }}
                 </button>
             </form>
 
             <Meter typed=Signal::derive(typed_len) result=action.value().into() />
 
             <div class="outcome" aria-live="polite">
-                <Outcome value=action.value().into() copied=copied set_copied=set_copied />
+                <Outcome
+                    value=action.value().into()
+                    copied=copied
+                    set_copied=set_copied
+                    locale=locale
+                />
             </div>
         </main>
     }
@@ -102,28 +157,35 @@ fn Shortener(
 #[component]
 fn Vault(
     links: RwSignal<Vec<SavedLink>>,
-    storage_error: ReadSignal<Option<String>>,
-    set_storage_error: WriteSignal<Option<String>>,
+    storage_failed: RwSignal<bool>,
+    locale: Signal<Locale>,
 ) -> impl IntoView {
     let remove = move |code: String| {
         links.update(|list| list.retain(|saved| saved.code != code));
-        persist(links, set_storage_error);
+        persist(links, storage_failed);
+    };
+
+    let tally = move || {
+        let list = links.read();
+        if list.is_empty() {
+            return String::new();
+        }
+        let saved: usize = list.iter().map(SavedLink::saved_chars).sum();
+        locale.get().tally(list.len(), saved)
     };
 
     view! {
         <section class="vault">
             <div class="vault-head">
-                <h2 class="vault-title">"In this browser"</h2>
-                <p class="vault-tally">{move || tally(&links.read())}</p>
+                <h2 class="vault-title">{move || locale.get().strings().vault_title}</h2>
+                <p class="vault-tally">{tally}</p>
             </div>
 
             <Show
                 when=move || !links.read().is_empty()
-                fallback=|| {
+                fallback=move || {
                     view! {
-                        <p class="vault-empty">
-                            "Nothing here yet. Shorten a link and it stays on this device."
-                        </p>
+                        <p class="vault-empty">{move || locale.get().strings().vault_empty}</p>
                     }
                 }
             >
@@ -144,7 +206,10 @@ fn Vault(
                             <button
                                 class="vault-remove"
                                 type="button"
-                                aria-label=format!("Remove {} from this list", link.code)
+                                aria-label={
+                                    let code = link.code.clone();
+                                    move || locale.get().remove_label(&code)
+                                }
                                 on:click={
                                     let code = link.code;
                                     move |_| remove(code.clone())
@@ -157,12 +222,12 @@ fn Vault(
                 </ul>
             </Show>
 
-            <p class="vault-note">
-                "Kept in this browser only, never sent to the server. Removing a link here does not disable it — anyone holding it keeps being redirected."
-            </p>
+            <p class="vault-note">{move || locale.get().strings().vault_note}</p>
 
-            <Show when=move || storage_error.read().is_some() fallback=|| ()>
-                <p class="vault-warning" role="alert">{move || storage_error.get()}</p>
+            <Show when=move || storage_failed.get() fallback=|| ()>
+                <p class="vault-warning" role="alert">
+                    {move || locale.get().strings().storage_error}
+                </p>
             </Show>
         </section>
     }
@@ -170,6 +235,8 @@ fn Vault(
 
 /// The signature element: the length of what was pasted collapsing onto the
 /// length of what came back. The track is the long URL, the fill is the code.
+///
+/// Deliberately free of text, so it needs no locale.
 #[component]
 fn Meter(
     typed: Signal<usize>,
@@ -231,9 +298,14 @@ fn Outcome(
     value: Signal<Option<Result<ShortenResponse, String>>>,
     copied: ReadSignal<bool>,
     set_copied: WriteSignal<bool>,
+    locale: Signal<Locale>,
 ) -> impl IntoView {
     move || match value.get() {
         None => ().into_any(),
+        // Left as the server wrote it. RFC 9457 says `title` is stable and safe
+        // to match on, so translating here is possible — but it would duplicate
+        // the catalogue and only ever serve this one client. Negotiating
+        // `Accept-Language` on the API is the honest fix; see ROADMAP stage 5.3.
         Some(Err(error)) => view! { <p class="outcome-error">{error}</p> }.into_any(),
         Some(Ok(response)) => {
             // Three owners on purpose: the macro moves what it renders, so the
@@ -254,7 +326,10 @@ fn Outcome(
                             set_copied.set(true);
                         }
                     >
-                        {move || if copied.get() { "Copied" } else { "Copy" }}
+                        {move || {
+                            let strings = locale.get().strings();
+                            if copied.get() { strings.copied } else { strings.copy }
+                        }}
                     </button>
                 </div>
             }
@@ -263,20 +338,38 @@ fn Outcome(
     }
 }
 
+/// Keeps `lang`, the tab title and the description in step with the choice.
+/// Every step is best-effort: a missing element means a slightly stale tab, not
+/// a broken page.
+fn apply_to_document(locale: Locale) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+
+    if let Some(root) = document.document_element() {
+        let _outcome = root.set_attribute("lang", locale.tag());
+    }
+
+    document.set_title(locale.strings().document_title);
+
+    if let Ok(Some(meta)) = document.query_selector("meta[name='description']") {
+        let _outcome = meta.set_attribute("content", locale.strings().document_description);
+    }
+}
+
 /// `with_untracked` rather than `read_untracked`: the borrow ends with the
 /// closure instead of living until the end of the `if let`.
-fn persist(links: RwSignal<Vec<SavedLink>>, set_storage_error: WriteSignal<Option<String>>) {
-    let outcome = links.with_untracked(|list| storage::save(list));
-
-    if let Err(error) = outcome {
-        // Private browsing and a full quota both reject writes. The link still
-        // exists on the server — what is lost is only this browser's memory of
-        // it, which is exactly what the person needs to be told.
-        set_storage_error.set(Some(format!(
-            "This browser refused to save the list ({error}). Copy the link before leaving."
-        )));
-    } else {
-        set_storage_error.set(None);
+fn persist(links: RwSignal<Vec<SavedLink>>, storage_failed: RwSignal<bool>) {
+    match links.with_untracked(|list| storage::save(list)) {
+        Ok(()) => storage_failed.set(false),
+        Err(error) => {
+            // Private browsing and a full quota both reject writes. The link
+            // still exists on the server — what is lost is only this browser's
+            // memory of it, which is what the person is told. The reason itself
+            // goes to the console: it is for whoever is debugging, not for them.
+            leptos::logging::warn!("could not save the link list: {error}");
+            storage_failed.set(true);
+        }
     }
 }
 
@@ -287,17 +380,6 @@ fn copy_to_clipboard(text: &str) {
     if let Some(window) = web_sys::window() {
         let _promise = window.navigator().clipboard().write_text(text);
     }
-}
-
-fn tally(links: &[SavedLink]) -> String {
-    if links.is_empty() {
-        return String::new();
-    }
-
-    let saved: usize = links.iter().map(SavedLink::saved_chars).sum();
-    let unit = if links.len() == 1 { "link" } else { "links" };
-
-    format!("{} {unit} · {saved} characters saved", links.len())
 }
 
 /// The scheme is noise in a list where every row is a URL. Keeping the rest

@@ -14,6 +14,35 @@
 # rate limiting would otherwise be what k6 measures.
 
 http:
+  middlewares:
+    # Applied to both routers below, so the API answers with the same headers as
+    # the front end — a shortcode redirect is a response like any other.
+    #
+    # Lighthouse reports these under "Trust and safety". They are informational
+    # audits and do not move the score, which is exactly why they are easy to
+    # never get around to.
+    oxid-security:
+      headers:
+        # One year, subdomains included. `stsPreload` only emits the token; the
+        # domain is not actually preloaded until submitted at hstspreload.org,
+        # and that submission is hard to undo — leave it as a separate decision.
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        # X-Frame-Options: DENY. Kept alongside the CSP directive below because
+        # older clients only understand this one.
+        frameDeny: true
+        contentTypeNosniff: true
+        referrerPolicy: strict-origin-when-cross-origin
+        customResponseHeaders:
+          # `frame-ancestors` only — a full CSP is a separate job here, because
+          # trunk emits the wasm bootstrap as an inline <script> and the
+          # stylesheet is now inline too, so `script-src`/`style-src` would need
+          # a per-build hash or nonce. This directive is safe on its own: it
+          # constrains framing and nothing else.
+          Content-Security-Policy: "frame-ancestors 'none'"
+          Cross-Origin-Opener-Policy: same-origin
+
   routers:
     # The front end gets exactly two paths and nothing else. This matters because
     # the API matches `/{code}` on any single-segment path: give the front a
@@ -28,6 +57,8 @@ http:
       entryPoints:
         - https
       service: oxid-web
+      middlewares:
+        - oxid-security
       tls:
         certResolver: letsencrypt
 
@@ -38,6 +69,8 @@ http:
       entryPoints:
         - https
       service: oxid-api
+      middlewares:
+        - oxid-security
       tls:
         certResolver: letsencrypt
 

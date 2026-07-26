@@ -115,12 +115,20 @@ Performance já está no teto — o que sobra é acessibilidade e segurança.
       `aria-live="polite"` no resultado, senão o leitor de tela não anuncia o link gerado
 - [x] `100svh` no lugar de `100vh`; alvo de toque do botão em 44 px; `flex-wrap` no
       formulário abaixo de ~420 px; `overflow-wrap: anywhere` no lugar de `break-all`
-- [ ] CSS inline via `data-trunk rel="inline"` — elimina os 150 ms de bloqueio de
-      renderização por um round-trip de 1,5 KB
-- [ ] Headers de segurança no Traefik: HSTS, `frame-ancestors`, COOP
+- [x] CSS inline via `data-trunk rel="inline"` — elimina os 150 ms de bloqueio de
+      renderização, ao custo de o CSS viajar dentro do HTML `no-cache`
+- [x] **Extra:** `preload` das duas fontes. Como o `<body>` vai vazio, nada pedia por elas
+      até o wasm montar a UI — exatamente o instante em que a página tem o que mostrar
+- [x] Headers de segurança no Traefik: HSTS, `frame-ancestors`, COOP, nosniff,
+      `Referrer-Policy` — **exige colar `traefik-oxid.yaml` no Coolify e recarregar o proxy**
 
-🎯 Acessibilidade em 100 e as três auditorias de segurança baratas fechadas.
-   Falta rodar o Lighthouse de novo depois do deploy para confirmar o 100.
+🎯 ✅ **Acessibilidade 91 → 100** confirmado em 2026-07-26, com desempenho 98, práticas
+   recomendadas 100, SEO 100 e navegação agêntica 2/2.
+
+**Sobre "chegar a 100 em desempenho":** 98 e 99 são a mesma medição com ruído — o índice
+oscila entre execuções do mesmo build. O que dava para atacar objetivamente era o bloqueio
+de renderização, e ele saiu. O que sobra é o script que a Cloudflare injeta e o tamanho do
+wasm (reativar `wasm-opt` quando o binaryen arm64 funcionar).
 
 **Fora desta etapa, de propósito:** CSP (o trunk emite o bootstrap do wasm como script
 inline, então exige hash por build ou nonce — trabalho de verdade) e markup estático/SSR
@@ -130,15 +138,63 @@ para melhorar FCP. Os dois estão em `docs/PERFORMANCE-WEB.md` com o custo estim
 script que a Cloudflare injeta no `<body>` (`max-age=300`, verificado em produção).
 Some desligando *Bot Fight Mode* — decisão de segurança, não de performance.
 
+## Etapa 5.3 — Idioma pelo navegador
+
+Hoje a interface é só inglês, e o `index.html` é estático: `lang="en"`, `<title>` e
+`<meta description>` fixos. O front é CSR, então quem decide o idioma é o wasm, depois do
+boot.
+
+- [ ] Detectar por `navigator.languages` (via `web-sys`), com inglês como fallback
+- [ ] **Seletor visível**, e não só detecção — quem usa o sistema em inglês e lê português
+      fica preso sem ele. A escolha explícita grava em `localStorage`
+      (`oxid.locale.v1`, ao lado da lista) e vence o navegador
+- [ ] Atualizar `document.documentElement.lang` no mount: o HTML servido é sempre `en`, e é
+      esse atributo que o leitor de tela usa para escolher a pronúncia
+- [ ] `<title>` e `<meta description>` acompanham o idioma escolhido
+- [ ] Todas as strings do front num catálogo só, nenhuma literal solta no `view!`
+
+🎯 Abrir com o navegador em pt-BR mostra a interface em português; trocar no seletor
+   sobrevive ao reload.
+🦀 `navigator.languages` via web-sys, estrutura de catálogo, sinal global de locale.
+
+**Decisão em aberto — crate ou `match`.** `leptos_i18n` traz Fluent, plural e interpolação;
+um `enum Locale` com `match` resolve dois idiomas e ~15 strings sem dependência nenhuma.
+Começar pelo `match` e migrar quando aparecer plural de verdade ou formatação de data.
+
+**O ponto não óbvio — o erro vem do servidor em inglês.** O `detail` da RFC 9457 é gerado
+pela API. Duas saídas, e elas não são equivalentes:
+
+- **Traduzir no front, mapeando por `title`/`type`.** O contrato já promete que esses campos
+  são estáveis justamente para o cliente casar em cima deles. Não toca no back, mas duplica
+  catálogo e só serve a este front.
+- **Negociar no back por `Accept-Language`.** Mais correto: quem chama a API por `curl` ou
+  script recebe o erro no idioma pedido. É o único caminho se um dia houver outro cliente —
+  e implica i18n no back também.
+
+**Limite conhecido:** com CSR, o crawler recebe o HTML estático em inglês qualquer que seja o
+leitor. `hreflang` e título traduzido só valem de verdade com SSR, que está fora de escopo.
+
 ## Etapa 6 — Configuração e dimensionamento
 
-- [ ] Toda config via env: porta, DATABASE_URL, REDIS_URL, tamanho do pool
-- [ ] `.env.example` documentado
-- [ ] Pool do Postgres pequeno por padrão (regra: cores do banco × 2)
-- [ ] Timeouts explícitos: acquire do pool, statement, conexão Redis
+Antecipada na Etapa 3 — só o último item continua aberto.
 
-🎯 App sobe em ambiente limpo só com `.env` preenchido; pool visível nas métricas.
-🦀 Structs de config com serde/envy, `Duration`, fail-fast no bootstrap.
+- [x] Toda config fora do código: `base.yaml` → `<ambiente>.yaml` → `APP_*`
+      (YAML em vez de `.env`; ver `docs/DECISOES.md`, Etapa 3, decisão 6)
+- [x] `.env.example` documentado
+- [x] Pool do Postgres pequeno por padrão — `max_connections: 8`
+- [x] Timeouts de acquire do pool (3 s) e de conexão do Redis (2 s)
+- [ ] **`statement_timeout` no Postgres** — o que falta. Sem ele, uma query travada segura
+      uma das 8 conexões por tempo indeterminado; bastam 8 para o serviço parar de
+      responder. Vai em `PgConnectOptions::options([("statement_timeout", …)])`, para valer
+      por conexão em vez de depender de config do servidor
+- [ ] Reavaliar `idle_timeout` e `max_lifetime` do pool na mesma passada
+
+🎯 App sobe em ambiente limpo só com o YAML preenchido; pool visível nas métricas (Etapa 7).
+🦀 Structs de config com serde, `Duration`, fail-fast no bootstrap.
+
+**Por que o `statement_timeout` importa mais aqui do que parece:** com pool grande, uma query
+lenta degrada; com pool de 8, ela **esgota**. É o tipo de falha que só aparece sob carga —
+ou seja, na Etapa 9, quando o custo de descobrir é bem maior.
 
 ## Etapa 7 — Observabilidade
 

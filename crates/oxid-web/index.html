@@ -15,7 +15,17 @@
       suggests. Worth revisiting when trunk ships a working arm64 binary.
     -->
     <link data-trunk rel="rust" data-wasm-opt="0" />
-    <link data-trunk rel="css" href="style.css" />
+    <!--
+      Inlined rather than linked: as a separate file the stylesheet costs a full
+      round trip before the first paint, which is where Lighthouse's 150 ms of
+      render blocking came from. It travels inside a no-cache document now, so
+      the trade is those bytes on every visit against that round trip.
+
+      Cost to remember: an inline <style> needs 'unsafe-inline' or a per-build
+      hash under a Content-Security-Policy. The CSP is already non-trivial here
+      because trunk emits the wasm bootstrap as an inline <script>.
+    -->
+    <link data-trunk rel="inline" href="style.css" />
     <!--
       copy-dir does not fingerprint what it copies, and nginx serves everything
       under /assets/ as immutable for a year. The version lives in the filename
@@ -25,6 +35,29 @@
       ~90 KB for the full family.
     -->
     <link data-trunk rel="copy-dir" href="fonts" />
+    <!--
+      Preloaded because nothing else would ask for them in time. The body ships
+      empty and the text only exists once the wasm has mounted, so without this
+      the font requests do not even start until after that — the one moment the
+      page has something to show.
+
+      Absolute /assets/ path: `public_url` now matches in development and in
+      production precisely so this link is correct in both.
+    -->
+    <link
+      rel="preload"
+      href="/assets/fonts/jetbrains-mono-400-v1.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/assets/fonts/jetbrains-mono-600-v1.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
   </head>
   <body></body>
 </html>

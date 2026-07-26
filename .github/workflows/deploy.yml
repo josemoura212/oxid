@@ -57,18 +57,18 @@ jobs:
       web-digest: ${{ steps.digest.outputs.web }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
           # The commit SHA is the tag that matters: `latest` cannot tell you what
@@ -78,7 +78,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -108,9 +108,9 @@ jobs:
     environment: production
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-kubectl@v5
 
       # A kubeconfig for a ServiceAccount scoped to the `oxid` namespace — not
       # the cluster admin one. See infra/k8s/README.md for how it is minted.

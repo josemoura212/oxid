@@ -1,12 +1,62 @@
+/* Iron and oxide.
+ *
+ * The previous palette was a cold blue-black — the default for developer tools,
+ * and wrong for a product named after rust. Everything here is warm: the page is
+ * burnt iron, the accent is the oxide on it.
+ *
+ * Every foreground/background pair below is at 4.5:1 or better in both schemes.
+ * The old button (#fff on #d4693a) sat at 3.57:1 and was the contrast failure
+ * Lighthouse reported.
+ */
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-400-v1.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-600-v1.woff2") format("woff2");
+}
+
 :root {
-  color-scheme: light dark;
-  --bg: #0f1115;
-  --surface: #171a21;
-  --border: #2a2f3a;
-  --fg: #e6e8ec;
-  --muted: #9aa2b1;
-  --accent: #d4693a;
-  --error: #e5484d;
+  color-scheme: dark light;
+
+  --page: #14110e;
+  --edge: #2e2823;
+  --fg: #ece8e3;
+  --muted: #a29890;
+
+  /* Face is the surface colour, ink is what sits on top of it, text is the
+     accent when it has to be readable against the page. They are three roles,
+     and collapsing them into one token is what broke the contrast before. */
+  --accent-face: #d4693a;
+  --accent-ink: #1a1206;
+  --accent-text: #d4693a;
+
+  --alert: #f0656a;
+  --inert: #4a423b;
+
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --page: #faf7f4;
+    --edge: #e7ded6;
+    --fg: #1c1815;
+    --muted: #6b615a;
+    --accent-text: #a34d20;
+    --alert: #c0272c;
+    --inert: #d9cfc6;
+  }
 }
 
 * {
@@ -15,85 +65,317 @@
 
 body {
   margin: 0;
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: var(--bg);
+  /* svh, not vh: on mobile browsers vh ignores the retracting address bar and
+     the last line of the page ends up under it. */
+  min-height: 100svh;
+  background: var(--page);
   color: var(--fg);
-  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font: 16px/1.6 var(--prose);
+  -webkit-font-smoothing: antialiased;
 }
 
-main {
-  width: min(34rem, 100% - 2rem);
-  padding: 2rem;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: var(--surface);
+.shell {
+  width: min(46rem, 100% - 2.5rem);
+  margin-inline: auto;
+  padding-block: clamp(2rem, 8vh, 4.5rem);
+  display: grid;
+  gap: 2.25rem;
 }
 
-h1 {
-  margin: 0 0 1.5rem;
-  font-size: 1.5rem;
-  letter-spacing: -0.02em;
-  color: var(--accent);
-}
+/* Masthead */
 
-form {
+.masthead {
   display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--edge);
+}
+
+.wordmark {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+  color: var(--accent-text);
+}
+
+/* Stage */
+
+.thesis {
+  margin: 0 0 1.75rem;
+  font-size: clamp(1.55rem, 5.5vw, 2.35rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.thesis-turn {
+  display: block;
+  color: var(--accent-text);
+}
+
+.composer {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-input {
-  flex: 1;
+.composer-input {
+  /* 16rem basis: below roughly 420px the button wraps to its own line instead
+     of squeezing the field down to a few visible characters. */
+  flex: 1 1 16rem;
   min-width: 0;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--bg);
-  color: inherit;
-  font: inherit;
+  min-height: 2.75rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--fg);
+  font: 0.95rem/1.5 var(--mono);
 }
 
-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.composer-input::placeholder {
+  color: var(--muted);
 }
 
-button {
-  padding: 0.6rem 1rem;
+.composer-submit {
+  /* 2.75rem is the mobile touch target floor; the old button was ~40px. */
+  min-height: 2.75rem;
+  padding-inline: 1.2rem;
   border: 0;
-  border-radius: 0.5rem;
-  background: var(--accent);
-  color: #fff;
-  font: inherit;
-  font-weight: 600;
+  border-radius: 0.4rem;
+  background: var(--accent-face);
+  color: var(--accent-ink);
+  font: 600 0.95rem/1 var(--mono);
   cursor: pointer;
 }
 
-button:disabled {
-  opacity: 0.6;
+.composer-submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.composer-submit:disabled {
+  opacity: 0.65;
   cursor: progress;
 }
 
-p {
-  margin: 1.25rem 0 0;
-  word-break: break-all;
+/* Once the button wraps onto its own line it should own that line. Left at its
+   content width it reads as a stray element rather than the form's action. */
+@media (max-width: 30rem) {
+  .composer-submit {
+    width: 100%;
+  }
 }
 
-.ok a {
-  color: var(--accent);
+/* The meter: the pasted length collapsing onto the code length. */
+
+.meter {
+  display: grid;
+  grid-template-columns: 3ch 1fr 3ch;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 1.4rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
-.error {
-  color: var(--error);
+.meter-from {
+  text-align: right;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #ffffff;
-    --surface: #fafafa;
-    --border: #e4e4e7;
-    --fg: #18181b;
-    --muted: #71717a;
+.meter-track {
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--edge);
+  overflow: hidden;
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--inert);
+  transition:
+    width 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 0.35s ease;
+}
+
+.meter-fill.is-compressed {
+  background: var(--accent-face);
+}
+
+.meter-to.is-reached {
+  color: var(--accent-text);
+}
+
+/* Outcome. The height is reserved so the result arriving does not shift the
+   list below it — CLS is 0 today and this is what keeps it there. */
+
+/* Enough room for one line of result so the list below does not jump when the
+   answer arrives, and no more — reserving the full block left a visible hole. */
+.outcome {
+  min-height: 2.5rem;
+  margin-top: 1.1rem;
+}
+
+.outcome-ok {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.outcome-link {
+  font-family: var(--mono);
+  font-size: clamp(1.2rem, 4.5vw, 1.7rem);
+  font-weight: 600;
+  color: var(--accent-text);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-text) 35%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.outcome-link:hover {
+  border-bottom-color: currentColor;
+}
+
+.outcome-copy {
+  min-height: 2.25rem;
+  padding-inline: 0.8rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted);
+  font: 0.8rem/1 var(--mono);
+  cursor: pointer;
+}
+
+.outcome-copy:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+
+.outcome-error {
+  margin: 0;
+  color: var(--alert);
+  /* anywhere, not break-all: a long URL still wraps, but ordinary words in an
+     error message are no longer chopped mid-word. */
+  overflow-wrap: anywhere;
+}
+
+/* Vault */
+
+.vault {
+  padding-top: 1.6rem;
+  border-top: 1px solid var(--edge);
+}
+
+.vault-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+}
+
+.vault-title {
+  margin: 0;
+  font: 600 0.75rem/1.4 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.vault-tally {
+  margin: 0;
+  font: 0.78rem/1.4 var(--mono);
+  color: var(--muted);
+}
+
+.vault-list {
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vault-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--edge);
+}
+
+.vault-code {
+  font: 600 0.95rem/1 var(--mono);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.vault-code:hover {
+  color: var(--accent-text);
+}
+
+.vault-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.vault-remove {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted);
+  font: 1.1rem/1 var(--mono);
+  cursor: pointer;
+}
+
+.vault-remove:hover {
+  color: var(--alert);
+  background: color-mix(in srgb, var(--alert) 12%, transparent);
+}
+
+.vault-empty,
+.vault-note {
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.vault-warning {
+  margin: 0.75rem 0 0;
+  font-size: 0.85rem;
+  color: var(--alert);
+}
+
+/* Shared */
+
+:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meter-fill {
+    transition: none;
   }
 }

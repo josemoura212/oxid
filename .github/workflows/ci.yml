@@ -79,8 +79,18 @@ jobs:
           --health-retries 10
 
     env:
-      # `#[sqlx::test]` creates a temporary database per test and needs this at
-      # runtime — the .sqlx cache only covers compile time.
+      # Compile against the committed cache. Without this the macros see
+      # DATABASE_URL and validate against the live database instead — which is
+      # empty here, because migrations only run inside `#[sqlx::test]`, long
+      # after compilation. Locally it passes only because the dev database
+      # already has the schema.
+      #
+      # This also means CI exercises the same .sqlx cache the production image
+      # builds from: a stale cache fails here rather than in the release.
+      SQLX_OFFLINE: "true"
+
+      # Runtime, not compile time: `#[sqlx::test]` uses this to create a
+      # temporary database per test, and SQLX_OFFLINE does not affect it.
       DATABASE_URL: postgres://oxid:oxid@localhost:5432/oxid
       OXID_TEST_REDIS: redis://127.0.0.1:6379
 

@@ -120,7 +120,8 @@ Performance já está no teto — o que sobra é acessibilidade e segurança.
 - [x] **Extra:** `preload` das duas fontes. Como o `<body>` vai vazio, nada pedia por elas
       até o wasm montar a UI — exatamente o instante em que a página tem o que mostrar
 - [x] Headers de segurança no Traefik: HSTS, `frame-ancestors`, COOP, nosniff,
-      `Referrer-Policy` — **exige colar `traefik-oxid.yaml` no Coolify e recarregar o proxy**
+      `Referrer-Policy` — **aplicados em 2026-07-26**, verificados pela Cloudflare e direto
+      na origem
 
 🎯 ✅ **Acessibilidade 91 → 100** confirmado em 2026-07-26, com desempenho 98, práticas
    recomendadas 100, SEO 100 e navegação agêntica 2/2.
@@ -138,28 +139,33 @@ para melhorar FCP. Os dois estão em `docs/PERFORMANCE-WEB.md` com o custo estim
 script que a Cloudflare injeta no `<body>` (`max-age=300`, verificado em produção).
 Some desligando *Bot Fight Mode* — decisão de segurança, não de performance.
 
-## Etapa 5.3 — Idioma pelo navegador
+## Etapa 5.3 — Idioma pelo navegador ✅
 
-Hoje a interface é só inglês, e o `index.html` é estático: `lang="en"`, `<title>` e
-`<meta description>` fixos. O front é CSR, então quem decide o idioma é o wasm, depois do
-boot.
-
-- [ ] Detectar por `navigator.languages` (via `web-sys`), com inglês como fallback
-- [ ] **Seletor visível**, e não só detecção — quem usa o sistema em inglês e lê português
+- [x] Detectar por `navigator.language` (via `web-sys`), **com pt-BR como padrão**
+- [x] **Seletor visível**, e não só detecção — quem usa o sistema em inglês e lê português
       fica preso sem ele. A escolha explícita grava em `localStorage`
       (`oxid.locale.v1`, ao lado da lista) e vence o navegador
-- [ ] Atualizar `document.documentElement.lang` no mount: o HTML servido é sempre `en`, e é
-      esse atributo que o leitor de tela usa para escolher a pronúncia
-- [ ] `<title>` e `<meta description>` acompanham o idioma escolhido
-- [ ] Todas as strings do front num catálogo só, nenhuma literal solta no `view!`
+- [x] `document.documentElement.lang` corrigido no mount — é esse atributo que o leitor de
+      tela usa para escolher a pronúncia
+- [x] `<title>` e `<meta description>` acompanham o idioma escolhido
+- [x] Todas as strings num catálogo só, nenhuma literal solta no `view!`
 
-🎯 Abrir com o navegador em pt-BR mostra a interface em português; trocar no seletor
+🎯 ✅ Abrir com o navegador em pt-BR mostra a interface em português; trocar no seletor
    sobrevive ao reload.
-🦀 `navigator.languages` via web-sys, estrutura de catálogo, sinal global de locale.
+🦀 `navigator.language` via web-sys, catálogo `&'static`, sinal de locale.
 
-**Decisão em aberto — crate ou `match`.** `leptos_i18n` traz Fluent, plural e interpolação;
-um `enum Locale` com `match` resolve dois idiomas e ~15 strings sem dependência nenhuma.
-Começar pelo `match` e migrar quando aparecer plural de verdade ou formatação de data.
+**Decisão — `match`, sem crate.** `leptos_i18n` traz Fluent, plural e interpolação; com dois
+idiomas e 19 strings, um `enum Locale` com catálogo `&'static Strings` resolve sem
+dependência nenhuma. A conta vira quando aparecer plural de verdade ou formatação de data.
+
+**Decisão — o `index.html` declara `lang="pt-BR"`.** O documento estático é o que o crawler
+lê e o que pinta antes do wasm montar. Declarar `en` e trocar depois significaria anunciar o
+idioma errado ao leitor de tela por todo o tempo de carga do bundle.
+
+**Ficou como está — o erro da API continua em inglês.** O `detail` da RFC 9457 é gerado pelo
+servidor. Traduzir no front, casando por `title`, duplicaria o catálogo e serviria só a este
+cliente; o certo é negociar `Accept-Language` na API, e isso é i18n no back — trabalho
+próprio, não um apêndice desta etapa.
 
 **O ponto não óbvio — o erro vem do servidor em inglês.** O `detail` da RFC 9457 é gerado
 pela API. Duas saídas, e elas não são equivalentes:
@@ -357,22 +363,24 @@ qualidade do banco — que faz a opção A começar na frente.
 
 ---
 
-## Próxima PR — SonarQube no CI
+## SonarQube no CI ✅
 
-Combinado em 2026-07-26, **antes da Etapa 7**. O Sonar já está configurado do lado do
-GitHub; o que falta é o repositório.
+- [x] Job no `ci.yml` com `SonarSource/sonarqube-scan-action`
+- [x] `fetch-depth: 0` no checkout — sem histórico completo o Sonar não calcula *new code*
+- [x] `sonar-project.properties`: `sonar.sources=crates`, excluindo `target/`, `.sqlx/`,
+      `dist/` e `fonts/`
+- [x] Importar o que já temos em vez de duplicar análise: `cargo clippy
+      --message-format=json` e LCOV do `cargo llvm-cov` (medido dentro do job de testes, que
+      já tem Postgres e Redis de pé)
+- [x] Scan pulado em PR de fork, onde o `SONAR_TOKEN` não existe — falharia sem dizer o
+      motivo
+- [ ] **Confirmar `projectKey` e `organization`** — hoje estão no padrão que o SonarQube
+      Cloud usa ao importar repositório do GitHub (`josemoura212_oxid` / `josemoura212`)
+- [ ] Adicionar `SONAR_TOKEN` em Settings → Secrets → Actions
 
-- [ ] Confirmar SonarQube Cloud × Server, `projectKey` e `organization`
-- [ ] Job no `ci.yml` com `SonarSource/sonarqube-scan-action` e `SONAR_TOKEN` nos secrets
-- [ ] `fetch-depth: 0` no checkout — sem histórico completo o Sonar não calcula *new code*
-- [ ] `sonar-project.properties`: `sonar.sources=crates`, excluindo `target/`, `.sqlx/` e
-      `crates/oxid-web/dist/`
-- [ ] Importar o que já temos em vez de duplicar análise: `cargo clippy
-      --message-format=json` em `sonar.rust.clippy.reportPaths` e LCOV
-      (`cargo llvm-cov`) em `sonar.rust.lcov.reportPaths`
-
-⚠️ O scan em PR de fork esbarra na **mesma falta de secret** do deploy — resolver junto com
-a pendência abaixo, não separado.
+**Por que importar em vez de deixar o Sonar analisar por conta:** o portão de lint do CI já
+é a afirmação mais rígida sobre este código — clippy com `pedantic` em deny. Se o Sonar
+reportasse critério próprio, passariam a existir dois padrões em desacordo.
 
 ## Pendência de CI — quem segura um deploy não revisado
 

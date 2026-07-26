@@ -43,13 +43,22 @@ spec:
             requests: { cpu: 10m, memory: 16Mi }
             limits: { memory: 64Mi }
 
-          # The image already runs as 101 and keeps its temp paths under /tmp, so
-          # there is nothing to mount and nothing to chown.
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+
+          # The only writable path nginx needs: it creates proxy_temp and friends
+          # under /tmp at startup. Everything else stays read-only.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
 
 ---
 apiVersion: v1

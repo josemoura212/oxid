@@ -5,6 +5,6 @@ use serde_json::{Value, json};
 
 use crate::state::AppState;
 
-pub async fn health(State(_state): State<Arc<AppState>>) -> Json<Value> {
+pub(super) async fn health(State(_state): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }

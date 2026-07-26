@@ -1,6 +1,6 @@
 use gloo_net::http::Request;
 use leptos::prelude::*;
-use oxid_shared::{ErrorResponse, ShortenRequest, ShortenResponse};
+use oxid_shared::{ProblemDetails, ShortenRequest, ShortenResponse};
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -8,10 +8,8 @@ fn main() {
 }
 
 async fn shorten(url: String) -> Result<ShortenResponse, String> {
-    // EN: relative path — trunk proxies it in dev, Nginx serves both on the same
-    // EN: origin in production.
-    // PT: caminho relativo — em dev o trunk faz proxy, em produção o Nginx serve
-    // PT: os dois na mesma origem.
+    // relative path — trunk proxies it in dev, Nginx serves both on the same
+    // origin in production.
     let response = Request::post("/v1/shorten")
         .json(&ShortenRequest { url })
         .map_err(|e| e.to_string())?
@@ -29,16 +27,13 @@ async fn shorten(url: String) -> Result<ShortenResponse, String> {
             .map_err(|e| e.to_string());
     }
 
-    // EN: the error body may not be JSON (axum's 404 comes empty); fall back to
-    // EN: the status instead of leaking "EOF while parsing a value", which tells
-    // EN: the user nothing.
-    // PT: o corpo de erro pode não ser JSON (404 do axum vem vazio); cair para o
-    // PT: status em vez de vazar "EOF while parsing a value", que não diz nada ao
-    // PT: usuário.
-    let error = response
-        .json::<ErrorResponse>()
-        .await
-        .map_or_else(|_| format!("{status} {status_text}"), |body| body.error);
+    // The error body may not be JSON at all — axum's own 404 comes back empty.
+    // Falling back to the status beats leaking "EOF while parsing a value", which
+    // tells the user nothing about what went wrong.
+    let error = response.json::<ProblemDetails>().await.map_or_else(
+        |_| format!("{status} {status_text}"),
+        |problem| problem.message().to_owned(),
+    );
 
     Err(error)
 }
@@ -46,8 +41,7 @@ async fn shorten(url: String) -> Result<ShortenResponse, String> {
 #[component]
 fn App() -> impl IntoView {
     let (url, set_url) = signal(String::new());
-    // EN: `new_local` — the gloo-net future is not `Send`; WASM is single-threaded.
-    // PT: `new_local` — o future do gloo-net não é `Send`; WASM é single-threaded.
+    // `new_local` — the gloo-net future is not `Send`; WASM is single-threaded.
     let action = Action::new_local(|input: &String| shorten(input.clone()));
 
     let result = move || {

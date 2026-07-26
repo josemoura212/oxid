@@ -1,6 +1,6 @@
 [package]
 name = "oxid-web"
-description = "Front do oxid em Leptos (CSR)"
+description = "oxid front end, Leptos CSR"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

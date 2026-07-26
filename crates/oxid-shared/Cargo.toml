@@ -1,6 +1,6 @@
 [package]
 name = "oxid-shared"
-description = "Contrato da API do oxid — tipos compartilhados entre back e front"
+description = "oxid API contract — types shared between back end and front end"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

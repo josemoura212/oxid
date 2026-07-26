@@ -1466,15 +1466,19 @@ dependencies = [
  "anyhow",
  "axum",
  "config",
+ "http-body-util",
  "oxid-shared",
  "secrecy",
  "serde",
  "serde_json",
  "sqlx",
+ "thiserror 2.0.19",
  "tokio",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

@@ -1,12 +1,10 @@
-# EN: `database.password` is deliberately absent — it comes from
-# EN: APP_DATABASE__PASSWORD. Without it the boot fails, which beats coming up
-# EN: with no credential.
-# PT: `database.password` fica de fora de propósito — vem de
-# PT: APP_DATABASE__PASSWORD. Sem ela o boot falha, que é melhor do que subir sem
-# PT: credencial.
+# `database.password` is deliberately absent — it comes from
+# APP_DATABASE__PASSWORD. Without it the boot fails, which beats coming up
+# with no credential.
 
 application:
   host: 0.0.0.0
+  base_url: https://oxid.uk
 
 database:
   require_ssl: true

@@ -57,14 +57,17 @@ Legenda: 🎯 = critério de aceite | 🦀 = conceito de Rust a dominar nesta et
 🎯 Fluxo completo via curl: encurtar → seguir redirect → chegar na URL original.
 🦀 `Deserialize`/`Serialize` com serde, `?` propagando para `AppError`, `IntoResponse`.
 
-## Etapa 5 — Cache Redis (cache-aside + cache negativo)
+## Etapa 5 — Cache Redis (cache-aside + cache negativo) ✅
 
-- [ ] Redis no docker-compose com `maxmemory` definido e `allkeys-lru`
-- [ ] Cliente Redis no `AppState`
-- [ ] `cache.rs`: no GET, tentar cache → miss → banco → gravar no cache SEMPRE (sem TTL)
-- [ ] Popular o cache também na escrita (o dado acabou de nascer quente)
-- [ ] Cache negativo: código inexistente grava sentinela com **SET NX + TTL curto**
-- [ ] Contadores de hit/miss (mesmo que só log por enquanto)
+- [x] Redis no docker-compose com `maxmemory` definido e `allkeys-lru`
+- [x] Cliente Redis no `AppState` (crate `redis` 1.x, não `fred` — ver `docs/DECISOES.md`)
+- [x] `cache.rs`: no GET, tentar cache → miss → banco → gravar no cache SEMPRE (sem TTL)
+- [x] Popular o cache também na escrita (o dado acabou de nascer quente)
+- [x] Cache negativo: código inexistente grava sentinela com **SET NX + TTL curto**
+- [x] Contadores de hit/miss (`tracing` com campo `cache=hit|miss|hit_negative`)
+- [x] **Extra:** rate limit por IP no `POST /v1/shorten` (`tower_governor`).
+      O redirect fica sem limite de propósito — é o caminho que o cache absorve
+      e que as Etapas 9-10 empurram a 11k req/s.
 
 🎯 Segunda leitura do mesmo código não toca o Postgres (provar por log/métrica).
 🎯 Teste da corrida: escrita concorrente positiva nunca é sobrescrita por negativa.

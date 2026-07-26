@@ -31,6 +31,39 @@ services:
       retries: 10
       start_period: 10s
 
+  redis:
+    image: redis:8-alpine
+    container_name: oxid-redis
+    restart: unless-stopped
+
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+    # Eviction is Redis's job, not the application's. The cache stores every miss
+    # with no TTL, so `maxmemory` plus `allkeys-lru` is what keeps it bounded —
+    # the original study capped the cache to a top-100 ranking instead and ended
+    # up with a 50% hit rate.
+    #
+    # No persistence: every entry is reconstructible from Postgres, so an AOF or
+    # RDB would cost write throughput to protect data we do not need protected.
+    command:
+      - redis-server
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
 volumes:
   postgres-data:
     name: oxid-postgres-data

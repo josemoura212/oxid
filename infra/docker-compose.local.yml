@@ -34,6 +34,10 @@ services:
       # to the container. `localhost` would be the api container itself.
       DATABASE_URL: postgres://${POSTGRES_USER:-oxid}:${POSTGRES_PASSWORD:-oxid}@postgres:5432/${POSTGRES_DB:-oxid}
       APP_DATABASE__HOST: postgres
+      # Service names on the compose network, so the published host ports (which
+      # may be shifted to avoid clashes) do not matter here.
+      APP_CACHE__HOST: redis
+      APP_CACHE__PORT: "6379"
       # 0.0.0.0 so the published port actually reaches the process.
       APP_APPLICATION__HOST: 0.0.0.0
       # The redirect lives at `/{code}`, and in dev `/` on :8080 is the trunk dev

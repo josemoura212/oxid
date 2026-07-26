@@ -13,3 +13,20 @@ database:
   # the original study blew up latency with 500 connections on a 2-vCPU Postgres.
   max_connections: 8
   acquire_timeout_seconds: 3
+
+cache:
+  host: localhost
+  # Matches REDIS_PORT in .env. 6379 and 6380 are taken by other projects on the
+  # dev machine; inside the cluster the service listens on 6379.
+  port: 6381
+  # Only the "does not exist" sentinel expires. Positive entries have no TTL —
+  # a shortcode is immutable, so there is nothing to invalidate.
+  negative_ttl_seconds: 60
+  connect_timeout_seconds: 2
+
+rate_limit:
+  # Only POST /v1/shorten is limited. The redirect is the path the cache absorbs
+  # and the one stages 9-10 push to 11k req/s — throttling it would punish the
+  # traffic the system exists to serve.
+  shorten_per_second: 5
+  shorten_burst: 20

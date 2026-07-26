@@ -22,8 +22,13 @@ oxid-shared = { path = "crates/oxid-shared" }
 anyhow = "1.0.104"
 axum = "0.8.9"
 config = { version = "0.15.25", default-features = false, features = ["yaml"] }
+redis = { version = "1.4.1", default-features = false, features = [
+    "tokio-comp",
+    "tokio-rustls-comp",
+    "connection-manager",
+] }
 console_error_panic_hook = "0.1.7"
-gloo-net = { version = "0.6.0", features = ["http"] }
+gloo-net = { version = "0.7.0", features = ["http"] }
 http-body-util = "0.1.3"
 leptos = "0.8.20"
 secrecy = { version = "0.10.3", features = ["serde"] }
@@ -33,6 +38,7 @@ thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["full"] }
 tower = "0.5.3"
 tower-http = { version = "0.7.0", features = ["trace"] }
+tower_governor = "0.8.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"

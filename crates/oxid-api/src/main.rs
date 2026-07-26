@@ -1,4 +1,4 @@
-use std::{process::ExitCode, sync::Arc};
+use std::{net::SocketAddr, process::ExitCode, sync::Arc};
 
 use anyhow::Context;
 use oxid::{configuration, routes::router, state::AppState, telemetry};
@@ -21,9 +21,9 @@ async fn run() -> anyhow::Result<()> {
     let settings = configuration::load()?;
     let addr = settings.application.addr();
 
-    let state = AppState::connect(&settings)
-        .await
-        .context("falha ao conectar no Postgres")?;
+    // No `.context` here: `AppState::connect` already names which dependency
+    // failed. Wrapping it would put a second, less precise sentence in front.
+    let state = AppState::connect(&settings).await?;
 
     let listener = TcpListener::bind(addr)
         .await
@@ -31,9 +31,18 @@ async fn run() -> anyhow::Result<()> {
 
     tracing::info!(%addr, "listening");
 
-    axum::serve(listener, router(Arc::new(state)))
-        .await
-        .context("axum server exited with error")?;
+    let app = router(Arc::new(state), settings.rate_limit)?;
+
+    // `into_make_service_with_connect_info` is what puts the peer address in the
+    // request extensions. Without it the rate limiter has no key to fall back to
+    // when X-Forwarded-For is absent — a direct hit on the service (bypassing
+    // the proxy) would answer 500 instead of being limited.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .context("axum server exited with error")?;
 
     Ok(())
 }

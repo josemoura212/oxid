@@ -49,6 +49,10 @@ pub(super) async fn shorten(
     let code =
         codec::shortcode(id).ok_or(AppError::Internal("row id outside the shortcode domain"))?;
 
+    // Populate on write, not only on read miss: whoever just created the link is
+    // about to click it, so this turns a guaranteed miss into a hit.
+    state.cache.set_url(&code, long_url).await;
+
     let short_url = format!("{}/{code}", state.base_url.trim_end_matches('/'));
 
     Ok(Json(ShortenResponse {

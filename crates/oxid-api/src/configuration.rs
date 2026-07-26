@@ -14,6 +14,8 @@ use sqlx::postgres::{PgConnectOptions, PgSslMode};
 pub struct Settings {
     pub application: ApplicationSettings,
     pub database: DatabaseSettings,
+    pub cache: CacheSettings,
+    pub rate_limit: RateLimitSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -61,6 +63,41 @@ impl DatabaseSettings {
     pub const fn acquire_timeout(&self) -> Duration {
         Duration::from_secs(self.acquire_timeout_seconds)
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CacheSettings {
+    pub host: String,
+    pub port: u16,
+    /// Positive entries never expire — a shortcode is immutable, so there is
+    /// nothing to invalidate. Only the "does not exist" sentinel gets a TTL,
+    /// because that answer can stop being true the moment someone shortens a URL.
+    pub negative_ttl_seconds: u64,
+    pub connect_timeout_seconds: u64,
+}
+
+impl CacheSettings {
+    pub fn url(&self) -> String {
+        format!("redis://{}:{}", self.host, self.port)
+    }
+
+    pub const fn connect_timeout(&self) -> Duration {
+        Duration::from_secs(self.connect_timeout_seconds)
+    }
+}
+
+/// Applies to `POST /v1/shorten` only.
+///
+/// The redirect is deliberately unlimited: it is the path the cache absorbs, the
+/// one stages 9 and 10 push to 11k req/s, and throttling it would punish exactly
+/// the traffic the system exists to serve. Writing is where abuse costs a row,
+/// so that is where the limit belongs.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct RateLimitSettings {
+    /// Sustained rate, per client key.
+    pub shorten_per_second: u64,
+    /// How much a client may exceed the sustained rate before being throttled.
+    pub shorten_burst: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

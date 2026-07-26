@@ -18,7 +18,10 @@ concurrency:
 jobs:
   build:
     name: build and push image
-    runs-on: ubuntu-latest
+    # Native ARM runner, not amd64 + QEMU. The k3s node is an Oracle Ampere box,
+    # so the image has to be arm64 — and emulating it costs 2-3x the build time
+    # on a release profile that is already slow. Free on public repositories.
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -27,11 +30,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-
-      # QEMU is what lets an amd64 runner emit an arm64 image. The k3s node is an
-      # Oracle Ampere box, so a native build here produces something it cannot run
-      # — `no match for platform in manifest`.
-      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -56,9 +54,8 @@ jobs:
         with:
           context: .
           file: infra/Dockerfile
-          # arm64 only: that is what the cluster runs, and emulating a second
-          # architecture would roughly double a build that already takes five
-          # minutes. Add linux/amd64 here if the image ever needs to run locally.
+          # Matches the runner, so this is a native build. Adding linux/amd64
+          # here would bring QEMU back for that half.
           platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

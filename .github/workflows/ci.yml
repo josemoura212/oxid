@@ -97,7 +97,62 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      # `llvm-cov` runs the same tests, instrumented. Measuring here rather than
+      # in a second job avoids standing up Postgres and Redis twice, and the
+      # report is what Sonar reads instead of re-deriving coverage itself.
+      - name: Run tests with coverage
+        run: >-
+          cargo llvm-cov --workspace --exclude oxid-web
+          --lcov --output-path lcov.info
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: coverage
+          path: lcov.info
+          retention-days: 1
+
+  sonar:
+    name: sonarqube
+    runs-on: ubuntu-latest
+    needs: test
+    # A fork's pull request gets no secrets, so the scan would fail on a missing
+    # SONAR_TOKEN rather than tell anyone anything. Same constraint that decided
+    # the deploy trigger — see ROADMAP, "Pendência de CI".
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Sonar needs the full history to attribute code to authors and to
+          # work out what counts as new code. A shallow clone silently degrades
+          # both.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run tests
-        run: cargo test --workspace --exclude oxid-web
+      - uses: actions/download-artifact@v6
+        with:
+          name: coverage
+
+      # Sonar imports this instead of running its own Rust analysis, so what it
+      # reports is exactly what the lint gate already enforces. `|| true`: the
+      # command exits non-zero when it finds lints, and here a finding is the
+      # output, not a failure — the `lint` job is what blocks on them.
+      - name: Clippy report
+        env:
+          SQLX_OFFLINE: "true"
+        run: >-
+          cargo clippy --workspace --exclude oxid-web --all-targets
+          --message-format=json > clippy.json || true
+
+      - uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

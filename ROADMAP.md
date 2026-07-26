@@ -374,9 +374,16 @@ qualidade do banco — que faz a opção A começar na frente.
       já tem Postgres e Redis de pé)
 - [x] Scan pulado em PR de fork, onde o `SONAR_TOKEN` não existe — falharia sem dizer o
       motivo
-- [ ] **Confirmar `projectKey` e `organization`** — hoje estão no padrão que o SonarQube
-      Cloud usa ao importar repositório do GitHub (`josemoura212_oxid` / `josemoura212`)
 - [ ] Adicionar `SONAR_TOKEN` em Settings → Secrets → Actions
+- [ ] Confirmar o `projectKey` depois de importar o projeto (`organization` já está
+      confirmada: é a mesma de `josemoura212/FC-sonar-node`)
+
+**Por que aqui precisa de token, e no `Fc-sonar` não precisou.** Aquele repositório usa
+*Automatic Analysis*, em que o SonarQube Cloud lê o repositório pelo app do GitHub, sem CI e
+sem segredo. Esse modo cobre todas as linguagens **exceto Objective-C, Dart e Rust** — e não
+importa cobertura nem relatório de linter externo. Ou seja: para este projeto ele não
+funcionaria, e mesmo se funcionasse deixaria de fora justamente o clippy e o LCOV. O
+`FC-sonar-node` já usa o caminho com scanner e token, que é o adotado aqui.
 
 **Por que importar em vez de deixar o Sonar analisar por conta:** o portão de lint do CI já
 é a afirmação mais rígida sobre este código — clippy com `pedantic` em deny. Se o Sonar

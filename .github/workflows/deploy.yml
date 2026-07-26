@@ -1,7 +1,15 @@
 name: Deploy
 
+# Merged pull requests only — a direct push to main deploys nothing. The branch
+# ruleset makes the PR the normal path anyway; this makes it the *only* one, so
+# a push made with admin bypass cannot ship unreviewed code by accident.
+#
+# Caveat worth knowing: `pull_request` runs from a fork do not receive secrets.
+# A community PR merged from a fork will therefore not deploy, and has to be
+# shipped with `workflow_dispatch`. Fine while every branch lives in this repo.
 on:
-  push:
+  pull_request:
+    types: [closed]
     branches: [main]
   workflow_dispatch:
 
@@ -10,6 +18,9 @@ env:
   # Owner rather than the full repository name: two images ship from this repo,
   # `oxid` and `oxid-web`, so the name is per-image below.
   OWNER: ${{ github.repository_owner }}
+  # On a merge this is the commit that landed on main; `github.sha` would be the
+  # PR's temporary merge ref, which no longer exists once the PR is closed.
+  DEPLOY_SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
 
 # Never two deploys at once, and never cancel one midway: a half-applied rollout
 # is worse than a queued one.
@@ -20,6 +31,9 @@ concurrency:
 jobs:
   build:
     name: build ${{ matrix.name }}
+    # A closed pull request fires whether it was merged or abandoned; only the
+    # merged one changed main.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     # Native ARM runner, not amd64 + QEMU. The k3s node is an Oracle Ampere box,
     # so the images have to be arm64 — and emulating it costs 2-3x the build time
     # on a release profile that is already slow. Free on public repositories.
@@ -47,6 +61,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -62,9 +78,14 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
           # The commit SHA is the tag that matters: `latest` cannot tell you what
           # is running, nor roll back to a known build.
+          #
+          # Spelled out rather than `type=sha`: on a pull_request event that
+          # helper tags the PR's merge ref, not the commit that landed on main.
+          # `latest` is unconditional here for the same reason — its usual
+          # `is_default_branch` guard is false outside a push event.
           tags: |
-            type=sha,format=long
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=sha-${{ env.DEPLOY_SHA }}
+            type=raw,value=latest
 
       - id: push
         uses: docker/build-push-action@v6
@@ -98,6 +119,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
 
       - uses: azure/setup-kubectl@v4
 

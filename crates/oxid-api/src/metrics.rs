@@ -84,19 +84,30 @@ pub async fn track(request: Request, next: Next) -> Response {
     response
 }
 
-/// Serves `GET /metrics` until the process ends.
+/// Binds `addr` and serves `GET /metrics` until the process ends.
 ///
 /// Bound separately from the API and never behind the proxy.
 pub async fn serve(handle: PrometheusHandle, pool: PgPool, addr: SocketAddr) -> anyhow::Result<()> {
-    let app = Router::new()
-        .route("/metrics", get(render))
-        .with_state(MetricsState { handle, pool });
-
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("failed to bind the metrics listener on {addr}"))?;
 
     tracing::info!(%addr, "metrics listening");
+
+    serve_on(handle, pool, listener).await
+}
+
+/// Takes an already-bound listener, which is what makes this testable: a test
+/// binds port 0, learns the port the OS handed out, and talks to it. Binding
+/// inside would leave no way to know where to knock.
+pub async fn serve_on(
+    handle: PrometheusHandle,
+    pool: PgPool,
+    listener: TcpListener,
+) -> anyhow::Result<()> {
+    let app = Router::new()
+        .route("/metrics", get(render))
+        .with_state(MetricsState { handle, pool });
 
     axum::serve(listener, app)
         .into_future()

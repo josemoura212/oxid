@@ -318,31 +318,29 @@ GitHub; o que falta é o repositório.
 ⚠️ O scan em PR de fork esbarra na **mesma falta de secret** do deploy — resolver junto com
 a pendência abaixo, não separado.
 
-## Pendência de CI — deploy sem secret em PR de fork
+## Pendência de CI — quem segura um deploy não revisado
 
-**O problema:** o deploy passou a disparar em `pull_request` com `types: [closed]`, para que
-push direto na `main` (possível com o bypass de admin) não publique nada. Só que runs de
-`pull_request` **vindos de fork não recebem secrets** — sem `KUBECONFIG`, o deploy falha. O
-repo é público, então é questão de tempo até alguém abrir PR de fork.
+**O que foi tentado e revertido:** disparar o deploy em `pull_request` com `types: [closed]`,
+para que push direto na `main` (possível com o bypass de admin) não publicasse nada. Falha
+porque runs de `pull_request` **vindos de fork não recebem secrets** — um PR da comunidade,
+depois de mergeado, quebraria por falta de `KUBECONFIG`. O repo é público; era questão de
+tempo.
 
-Hoje o contorno é `workflow_dispatch` na mão. As saídas de verdade, em ordem de preferência:
+**O que ficou:** `push` na `main`, que roda no repositório base e sempre tem os secrets. Com o
+ruleset, a única forma de a `main` andar é um PR mergeado, então o gatilho já descreve a
+realidade.
 
-1. **Voltar para `push: branches: [main]` e proteger o `environment: production`.**
-   Depois do merge o evento é um push no repositório base, que **recebe secrets normalmente**
-   — o problema simplesmente não existe. E o objetivo de "não publicar sem revisão" passa a
-   ser feito por quem tem essa função: *required reviewers* no environment, que segura o job
-   até alguém aprovar, inclusive num push de bypass. O job já declara
-   `environment: production`; falta só configurar a regra no GitHub.
-2. **`workflow_run`** encadeado depois do CI. Roda no contexto do repo base, com secrets, e
-   usa a definição do workflow que está na branch default. Resolve, mas acrescenta um
-   workflow e um nível de indireção para um problema que a opção 1 dissolve.
-3. **`pull_request_target`** — **não usar.** Ele roda no contexto base *com* secrets e é o
-   antipadrão clássico de CI: fazer checkout do código do fork ali entrega os segredos a
-   quem abriu o PR.
+**O que falta:** o gatilho nunca foi o lugar certo para barrar deploy não revisado — quem faz
+isso é o **environment**. O job de deploy já declara `environment: production`; com *required
+reviewers* configurado, ele fica pendente esperando aprovação humana, **inclusive num push de
+bypass**. É mais forte do que o gatilho conseguia ser.
 
-- [ ] Configurar *required reviewers* no environment `production`
-- [ ] Voltar o gatilho do deploy para `push` na `main`
+- [ ] Configurar *required reviewers* no environment `production` (Settings → Environments)
 - [ ] Confirmar que um push de bypass fica pendente de aprovação em vez de publicar
+
+**Descartado:** `pull_request_target` roda no contexto base *com* secrets — fazer checkout do
+código do fork ali entrega as credenciais a quem abriu o PR. `workflow_run` resolveria, mas
+acrescenta um workflow inteiro para um problema que o environment dissolve.
 
 ---
 

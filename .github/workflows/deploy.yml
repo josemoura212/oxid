@@ -7,7 +7,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ${{ github.repository }}
+  # Owner rather than the full repository name: two images ship from this repo,
+  # `oxid` and `oxid-web`, so the name is per-image below.
+  OWNER: ${{ github.repository_owner }}
 
 # Never two deploys at once, and never cancel one midway: a half-applied rollout
 # is worse than a queued one.
@@ -17,16 +19,31 @@ concurrency:
 
 jobs:
   build:
-    name: build and push image
+    name: build ${{ matrix.name }}
     # Native ARM runner, not amd64 + QEMU. The k3s node is an Oracle Ampere box,
-    # so the image has to be arm64 — and emulating it costs 2-3x the build time
+    # so the images have to be arm64 — and emulating it costs 2-3x the build time
     # on a release profile that is already slow. Free on public repositories.
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
+
+    strategy:
+      # One failing image must not cancel the other: knowing whether the front
+      # end also broke is worth the extra minute.
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            image: oxid
+            dockerfile: infra/Dockerfile
+          - name: web
+            image: oxid-web
+            dockerfile: infra/Dockerfile.web
+
     outputs:
-      digest: ${{ steps.push.outputs.digest }}
+      api-digest: ${{ steps.digest.outputs.api }}
+      web-digest: ${{ steps.digest.outputs.web }}
 
     steps:
       - uses: actions/checkout@v5
@@ -42,7 +59,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
           # The commit SHA is the tag that matters: `latest` cannot tell you what
           # is running, nor roll back to a known build.
           tags: |
@@ -53,15 +70,25 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: infra/Dockerfile
+          file: ${{ matrix.dockerfile }}
           # Matches the runner, so this is a native build. Adding linux/amd64
           # here would bring QEMU back for that half.
           platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Scoped per image, otherwise the two matrix jobs overwrite each
+          # other's cache and both rebuild from scratch every run.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      # Matrix jobs cannot each set the same output, so each writes its own key
+      # and the deploy job reads whichever it needs.
+      - id: digest
+        env:
+          NAME: ${{ matrix.name }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: echo "${NAME}=${DIGEST}" >> "$GITHUB_OUTPUT"
 
   deploy:
     name: roll out to k3s
@@ -92,7 +119,7 @@ jobs:
       # attach either.
       - name: Run migrations
         env:
-          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE }}@${{ needs.build.outputs.digest }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.OWNER }}/oxid@${{ needs.build.outputs.api-digest }}
         run: |
           kubectl -n oxid delete job oxid-migrate --ignore-not-found --wait=true
           sed "s|IMAGE_REF|${IMAGE_REF}|" infra/k8s/50-migrate-job.yaml | kubectl apply -f -
@@ -106,15 +133,26 @@ jobs:
 
       # Deploy by digest, not tag: `latest` is ambiguous and racy, the digest is
       # exactly the image this run built.
-      - name: Roll out
+      #
+      # API first: the front end talks to it, so a new bundle arriving before the
+      # endpoint it expects would break for as long as the rollout takes.
+      - name: Roll out API
         env:
-          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE }}@${{ needs.build.outputs.digest }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.OWNER }}/oxid@${{ needs.build.outputs.api-digest }}
         run: |
           kubectl -n oxid set image deployment/api api="$IMAGE_REF"
           kubectl -n oxid rollout status deployment/api --timeout=180s
+
+      - name: Roll out front end
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.OWNER }}/oxid-web@${{ needs.build.outputs.web-digest }}
+        run: |
+          kubectl -n oxid set image deployment/web web="$IMAGE_REF"
+          kubectl -n oxid rollout status deployment/web --timeout=120s
 
       - name: Smoke test
         run: |
           kubectl -n oxid run "smoke-${GITHUB_RUN_ID}" \
             --rm -i --restart=Never --image=curlimages/curl:latest -- \
-            curl -fsS --max-time 10 http://api.oxid.svc.cluster.local:3000/health
+            sh -c 'curl -fsS --max-time 10 http://api.oxid.svc.cluster.local:3000/health \
+                && curl -fsS --max-time 10 http://web.oxid.svc.cluster.local:8080/healthz'

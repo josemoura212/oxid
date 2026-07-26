@@ -15,16 +15,39 @@
 
 http:
   routers:
-    oxid:
-      rule: Host(`oxid.uk`) || Host(`www.oxid.uk`)
+    # The front end gets exactly two paths and nothing else. This matters because
+    # the API matches `/{code}` on any single-segment path: give the front a
+    # broader rule and shortcodes start landing on nginx.
+    #
+    # The explicit priority removes any doubt about which router wins — Traefik
+    # ranks by rule length otherwise, which is implicit and easy to break by
+    # editing a rule.
+    oxid-web:
+      rule: Host(`oxid.uk`) && (Path(`/`) || PathPrefix(`/assets`))
+      priority: 100
       entryPoints:
         - https
-      service: oxid
+      service: oxid-web
+      tls:
+        certResolver: letsencrypt
+
+    # Everything else: /health, /v1/shorten, and every shortcode.
+    oxid-api:
+      rule: Host(`oxid.uk`) || Host(`www.oxid.uk`)
+      priority: 10
+      entryPoints:
+        - https
+      service: oxid-api
       tls:
         certResolver: letsencrypt
 
   services:
-    oxid:
+    oxid-web:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:30092"
+
+    oxid-api:
       loadBalancer:
         servers:
           - url: "http://host.docker.internal:30091"

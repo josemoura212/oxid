@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: oxid
+spec:
+  # One replica: this is 2.3 MB of static files behind a cache header that says
+  # `immutable`. Scaling it would be scaling something nobody asks for twice.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/josemoura212/oxid-web:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8080
+              name: http
+
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+          # nginx writes its pid and temp files, so the root filesystem cannot be
+          # read-only without mounting these.
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
+
+      volumes:
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: oxid
+spec:
+  # NodePort like the API: Traefik lives outside the cluster and reaches the node
+  # through host.docker.internal. 30091 is the API, so this one takes 30092.
+  type: NodePort
+  selector:
+    app: web
+  ports:
+    - port: 8080
+      targetPort: http
+      nodePort: 30092

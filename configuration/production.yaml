@@ -1,0 +1,8 @@
+# `database.password` fica de fora de propósito: vem de APP_DATABASE__PASSWORD.
+# Sem ela o boot falha, que é melhor do que subir sem credencial.
+
+application:
+  host: 0.0.0.0
+
+database:
+  require_ssl: true

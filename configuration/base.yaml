@@ -1,0 +1,15 @@
+application:
+  host: 127.0.0.1
+  port: 3000
+  base_url: http://127.0.0.1:3000
+
+database:
+  host: localhost
+  port: 5432
+  username: oxid
+  database_name: oxid
+  require_ssl: false
+  # regra do projeto: cores do banco × 2. Pool grande não acelera — o estudo
+  # original explodiu a latência com 500 conexões num Postgres de 2 vCPUs.
+  max_connections: 8
+  acquire_timeout_seconds: 3

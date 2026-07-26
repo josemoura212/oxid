@@ -1,7 +1,7 @@
-use std::{net::SocketAddr, process::ExitCode, sync::Arc};
+use std::{process::ExitCode, sync::Arc};
 
 use anyhow::Context;
-use oxid::{routes::router, state::AppState, telemetry};
+use oxid::{configuration, routes::router, state::AppState, telemetry};
 use tokio::net::TcpListener;
 
 fn main() -> ExitCode {
@@ -18,15 +18,20 @@ fn main() -> ExitCode {
 async fn run() -> anyhow::Result<()> {
     telemetry::init();
 
-    let state = Arc::new(AppState);
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let settings = configuration::load()?;
+    let addr = settings.application.addr();
+
+    let state = AppState::connect(&settings)
+        .await
+        .context("falha ao conectar no Postgres")?;
+
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("failed to bind {addr}"))?;
 
     tracing::info!(%addr, "listening");
 
-    axum::serve(listener, router(state))
+    axum::serve(listener, router(Arc::new(state)))
         .await
         .context("axum server exited with error")?;
 

@@ -29,15 +29,16 @@ Legenda: 🎯 = critério de aceite | 🦀 = conceito de Rust a dominar nesta et
 🎯 `cargo test` verde; dois IDs consecutivos geram códigos visualmente não relacionados.
 🦀 Módulos, `Option`/`Result`, `#[cfg(test)]`, aritmética com `wrapping_*`/`checked_*`.
 
-## Etapa 3 — Persistência com sqlx
+## Etapa 3 — Persistência com sqlx ✅
 
-- [ ] Postgres local via docker-compose (`infra/docker-compose.yml`)
-- [ ] Migration: tabela `urls` (id bigserial PK, url_hash unique, long_url,
-      short_code unique nullable até gerar, created_at)
-- [ ] `PgPool` no `AppState`, criado no main com `max_connections` vindo de config
-- [ ] `repo.rs`: inserir com `ON CONFLICT DO NOTHING RETURNING id` + SELECT fallback
+- [x] Postgres local via docker-compose (`infra/docker-compose.yml`)
+- [x] Migration: tabela `urls` (id bigserial PK, url_hash unique gerado, long_url,
+      created_at). **Sem `short_code`**: o código é função pura do id, guardá-lo
+      seria dado derivado que pode divergir — ver `docs/DECISOES.md`.
+- [x] `PgPool` no `AppState`, criado no main com `max_connections` vindo de config
+- [x] `repo.rs`: inserir com `ON CONFLICT DO NOTHING RETURNING id` + SELECT fallback
       (idempotência no banco, não na aplicação)
-- [ ] `sqlx::query_as!` compilando contra o schema real
+- [x] `sqlx::query_scalar!` compilando contra o schema real (+ `.sqlx/` para build offline)
 
 🎯 Inserir a mesma URL duas vezes retorna o MESMO id, provado por teste de integração.
 🦀 async com banco, macros do sqlx, `DATABASE_URL` em `.env`, `Result` + `?`.

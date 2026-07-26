@@ -14,7 +14,7 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use http_body_util::BodyExt;
-use oxid::{routes, state::AppState};
+use oxid::{cache::Cache, configuration::RateLimitSettings, routes, state::AppState};
 use oxid_shared::{PROBLEM_JSON, ProblemDetails, ShortenResponse};
 use serde_json::json;
 use sqlx::PgPool;
@@ -22,18 +22,44 @@ use tower::ServiceExt;
 
 const BASE_URL: &str = "https://oxid.test";
 
+/// Cache disabled on purpose: these tests assert routing and status codes, and a
+/// shared Redis would make them order-dependent. Caching has its own suite.
+///
+/// The rate limit is set high enough to never trigger — these tests fire dozens
+/// of requests in a loop from one address, which is exactly what it exists to
+/// stop. Rate limiting has its own test.
 fn app(pool: PgPool) -> Router {
-    routes::router(Arc::new(AppState {
+    let state = Arc::new(AppState {
         db_pool: pool,
+        cache: Cache::disabled(),
         base_url: BASE_URL.to_owned(),
-    }))
+    });
+
+    routes::router(state, permissive_rate_limit()).unwrap()
 }
 
+const fn permissive_rate_limit() -> RateLimitSettings {
+    RateLimitSettings {
+        shorten_per_second: 1_000,
+        shorten_burst: 10_000,
+    }
+}
+
+/// The rate limiter keys on the client IP, taken from X-Forwarded-For. `oneshot`
+/// has no socket behind it, so the header is what stands in for one — the same
+/// thing Traefik sets in front of the real service.
+const CLIENT_IP: &str = "203.0.113.10";
+
 fn post_shorten(url: &str) -> Request<Body> {
+    post_shorten_from(url, CLIENT_IP)
+}
+
+fn post_shorten_from(url: &str, client_ip: &str) -> Request<Body> {
     Request::builder()
         .method("POST")
         .uri("/v1/shorten")
         .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", client_ip)
         .body(Body::from(json!({ "url": url }).to_string()))
         .unwrap()
 }
@@ -173,6 +199,7 @@ async fn malformed_json_is_rejected_with_a_problem_body(pool: PgPool) {
         .method("POST")
         .uri("/v1/shorten")
         .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", CLIENT_IP)
         .body(Body::from("{ this is not json"))
         .unwrap();
 
@@ -217,6 +244,61 @@ async fn malformed_code_is_not_found_too(pool: PgPool) {
             response.status(),
             StatusCode::NOT_FOUND,
             "should have 404'd on {code:?}"
+        );
+    }
+}
+
+/// Writing is where abuse costs a row, so that is the path with a limit. The
+/// redirect stays unlimited on purpose — see `RateLimitSettings`.
+#[sqlx::test(migrations = "../../migrations")]
+async fn shorten_is_rate_limited_and_the_redirect_is_not(pool: PgPool) {
+    let state = Arc::new(AppState {
+        db_pool: pool,
+        cache: Cache::disabled(),
+        base_url: BASE_URL.to_owned(),
+    });
+    let app = routes::router(
+        state,
+        RateLimitSettings {
+            shorten_per_second: 1,
+            shorten_burst: 2,
+        },
+    )
+    .unwrap();
+
+    let mut statuses = Vec::new();
+    for i in 0..10 {
+        let request = post_shorten_from(&format!("https://example.com/burst/{i}"), "198.51.100.1");
+        let response = app.clone().oneshot(request).await.unwrap();
+        statuses.push(response.status());
+    }
+
+    let throttled = statuses
+        .iter()
+        .filter(|status| **status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+
+    assert!(throttled > 0, "burst of 10 writes was never throttled");
+
+    // A different client is unaffected — the limit is per key, not global. This
+    // is what `PeerIpKeyExtractor` would get wrong behind a proxy, where every
+    // request carries the proxy's address.
+    let other = post_shorten_from("https://example.com/other-client", "198.51.100.2");
+    let response = app.clone().oneshot(other).await.unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "one client's burst throttled another"
+    );
+
+    // Reads are untouched by the limit.
+    for _ in 0..10 {
+        let response = app.clone().oneshot(get_code("aaaaaaa")).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "the redirect must not be rate limited"
         );
     }
 }

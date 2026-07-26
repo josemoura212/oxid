@@ -1,0 +1,114 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository }}
+
+# Never two deploys at once, and never cancel one midway: a half-applied rollout
+# is worse than a queued one.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build and push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          # The commit SHA is the tag that matters: `latest` cannot tell you what
+          # is running, nor roll back to a known build.
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: roll out to k3s
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/setup-kubectl@v4
+
+      # A kubeconfig for a ServiceAccount scoped to the `oxid` namespace — not
+      # the cluster admin one. See docs/k3s/README.md for how it is minted.
+      - name: Configure kubectl
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      # Migrations run before the rollout, as a Job. Doing it inside the pods
+      # would have both replicas racing on the same schema.
+      #
+      # Applied from a manifest, not `kubectl create job`: the migration needs
+      # the same ConfigMap and Secret as the API, and the imperative form cannot
+      # attach either.
+      - name: Run migrations
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE }}@${{ needs.build.outputs.digest }}
+        run: |
+          kubectl -n oxid delete job oxid-migrate --ignore-not-found --wait=true
+          sed "s|IMAGE_REF|${IMAGE_REF}|" docs/k3s/50-migrate-job.yaml | kubectl apply -f -
+
+          # `wait` errors out if the Job fails, so watch for either outcome and
+          # surface the logs — a silent timeout says nothing about what broke.
+          if ! kubectl -n oxid wait --for=condition=complete job/oxid-migrate --timeout=120s; then
+            kubectl -n oxid logs job/oxid-migrate --tail=100 || true
+            exit 1
+          fi
+
+      # Deploy by digest, not tag: `latest` is ambiguous and racy, the digest is
+      # exactly the image this run built.
+      - name: Roll out
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE }}@${{ needs.build.outputs.digest }}
+        run: |
+          kubectl -n oxid set image deployment/api api="$IMAGE_REF"
+          kubectl -n oxid rollout status deployment/api --timeout=180s
+
+      - name: Smoke test
+        run: |
+          kubectl -n oxid run "smoke-${GITHUB_RUN_ID}" \
+            --rm -i --restart=Never --image=curlimages/curl:latest -- \
+            curl -fsS --max-time 10 http://api.oxid.svc.cluster.local:3000/health

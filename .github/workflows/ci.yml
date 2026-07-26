@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # No global `RUSTFLAGS: -D warnings` here: RUSTFLAGS applies to every crate
+  # compiled from source, dependencies included, so one warning anywhere in the
+  # tree fails the build. The `-- -D warnings` on the clippy calls below only
+  # affects our own crates, which is what we actually want to enforce.
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      # The committed .sqlx cache is what lets the macros compile without a
+      # database. If it is stale, this fails — which is the point.
+      - name: Clippy (back end)
+        env:
+          SQLX_OFFLINE: "true"
+        run: cargo clippy --workspace --exclude oxid-web --all-targets -- -D warnings
+
+      # The front end only type-checks on its own target: lints that exist solely
+      # on wasm32 are invisible from the host.
+      - name: Clippy (front end)
+        run: cargo clippy -p oxid-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: oxid
+          POSTGRES_PASSWORD: oxid
+          POSTGRES_DB: oxid
+          # Must match the local cluster: the generated `url_hash` column is only
+          # IMMUTABLE under a fixed encoding, so a different one would produce
+          # different hashes.
+          POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U oxid -d oxid"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      # `#[sqlx::test]` creates a temporary database per test and needs this at
+      # runtime — the .sqlx cache only covers compile time.
+      DATABASE_URL: postgres://oxid:oxid@localhost:5432/oxid
+      OXID_TEST_REDIS: redis://127.0.0.1:6379
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --workspace --exclude oxid-web

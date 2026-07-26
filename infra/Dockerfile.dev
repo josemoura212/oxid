@@ -1,15 +1,11 @@
-# EN: Development image only — hot reload with the source bind-mounted from the
-# EN: host. Production build comes in Stage 8 (multi-stage, slim runtime).
-# PT: Imagem só de desenvolvimento — hot reload com o fonte vindo do host por bind
-# PT: mount. O build de produção entra na Etapa 8 (multi-stage, runtime slim).
+# Development image only — hot reload with the source bind-mounted from the
+# host. Production build comes in Stage 8 (multi-stage, slim runtime).
 FROM rust:1.97-bookworm
 
 RUN rustup target add wasm32-unknown-unknown
 
-# EN: binstall pulls prebuilt binaries; `cargo install` would compile these from
-# EN: source and add ~10 minutes to the image build.
-# PT: binstall baixa binários prontos; `cargo install` compilaria do zero e somaria
-# PT: uns 10 minutos ao build da imagem.
+# binstall pulls prebuilt binaries; `cargo install` would compile these from
+# source and add ~10 minutes to the image build.
 RUN curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
     && cargo binstall -y --install-path /usr/local/bin \
     watchexec-cli \
@@ -17,17 +13,12 @@ RUN curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/
     wasm-bindgen-cli \
     && rm -rf /usr/local/cargo/registry
 
-# EN: CARGO_HOME outside the image default so the container can run as the host
-# EN: user (UID 1000) without permission errors on the registry cache.
-# PT: CARGO_HOME fora do padrão da imagem para o container poder rodar como o
-# PT: usuário do host (UID 1000) sem erro de permissão no cache do registry.
+# CARGO_HOME outside the image default so the container can run as the host
+# user (UID 1000) without permission errors on the registry cache.
 ENV CARGO_HOME=/cargo
-# EN: a named volume inherits the permissions of the path it shadows in the image.
-# EN: Without creating these world-writable first, the volume comes up root-owned
-# EN: and the non-root container cannot write to it.
-# PT: um volume nomeado herda a permissão do caminho que ele encobre na imagem.
-# PT: Sem criar estes como graváveis por todos, o volume sobe com dono root e o
-# PT: container não-root não consegue escrever nele.
+# a named volume inherits the permissions of the path it shadows in the image.
+# Without creating these world-writable first, the volume comes up root-owned
+# and the non-root container cannot write to it.
 RUN mkdir -p /cargo /target && chmod 777 /cargo /target
 
 WORKDIR /app

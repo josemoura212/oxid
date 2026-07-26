@@ -1,0 +1,116 @@
+# EN: Override that adds API and front with hot reload on top of the Postgres from
+# EN: docker-compose.yml. Source comes from the host by bind mount, so editing a
+# EN: file on the host rebuilds inside the container.
+# EN:
+# EN:   docker compose --env-file .env \
+# EN:     -f infra/docker-compose.yml -f infra/docker-compose.local.yml up
+# PT: Override que adiciona API e front com hot reload por cima do Postgres do
+# PT: docker-compose.yml. O fonte vem do host por bind mount, então editar um
+# PT: arquivo no host recompila dentro do container.
+# PT:
+# PT:   docker compose --env-file .env \
+# PT:     -f infra/docker-compose.yml -f infra/docker-compose.local.yml up
+
+x-rust-dev: &rust-dev
+  build:
+    context: ..
+    dockerfile: infra/Dockerfile.dev
+  # EN: runs as the host user so files written into the bind mount (Cargo.lock,
+  # EN: .sqlx) do not end up owned by root.
+  # PT: roda como o usuário do host para que arquivos escritos no bind mount
+  # PT: (Cargo.lock, .sqlx) não fiquem com dono root.
+  user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+  # EN: `init` puts tini as PID 1, which forwards SIGTERM to the child and reaps
+  # EN: zombies. Without it cargo/trunk ignore the stop signal and Docker waits the
+  # EN: full grace period before SIGKILL — that is the slow shutdown.
+  # PT: `init` coloca o tini como PID 1, que repassa SIGTERM para o filho e recolhe
+  # PT: zumbis. Sem ele o cargo/trunk ignoram o sinal de parada e o Docker espera o
+  # PT: grace period inteiro antes do SIGKILL — é daí que vem a demora.
+  init: true
+  # EN: nothing to flush on shutdown; no reason to wait the default 10s.
+  # PT: nada a persistir no encerramento; não há motivo para esperar os 10s padrão.
+  stop_grace_period: 2s
+  environment:
+    CARGO_TARGET_DIR: /target
+
+services:
+  api:
+    <<: *rust-dev
+    container_name: oxid-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    environment:
+      # EN: `postgres` is the compose service name — inside the network it resolves
+      # EN: to the container. `localhost` would be the api container itself.
+      # PT: `postgres` é o nome do serviço no compose — dentro da rede ele resolve
+      # PT: para o container. `localhost` seria o próprio container da api.
+      DATABASE_URL: postgres://${POSTGRES_USER:-oxid}:${POSTGRES_PASSWORD:-oxid}@postgres:5432/${POSTGRES_DB:-oxid}
+      APP_DATABASE__HOST: postgres
+      # EN: 0.0.0.0 so the published port actually reaches the process.
+      # PT: 0.0.0.0 para que a porta publicada alcance o processo.
+      APP_APPLICATION__HOST: 0.0.0.0
+      # EN: shortcodes point at the front, which proxies /v1 back to this service.
+      # PT: shortcodes apontam para o front, que faz proxy de /v1 de volta para cá.
+      APP_APPLICATION__BASE_URL: http://127.0.0.1:8080
+      RUST_LOG: ${RUST_LOG:-oxid=debug,tower_http=debug,info}
+      CARGO_TARGET_DIR: /target
+
+    volumes:
+      - ..:/app
+      - cargo-registry:/cargo
+      # EN: named volume, not bind: the host `target/` holds artifacts from another
+      # EN: toolchain and sharing it would force a full rebuild on every switch.
+      # PT: volume nomeado, não bind: o `target/` do host tem artefatos de outra
+      # PT: toolchain e compartilhar forçaria rebuild completo a cada troca.
+      - api-target:/target
+
+    # EN: watches only what the API compiles from. Watching `crates` whole would
+    # EN: catch `oxid-web/dist/`, and every trunk rebuild would restart the API.
+    # PT: observa só o que a API compila. Observar `crates` inteiro pegaria o
+    # PT: `oxid-web/dist/`, e cada rebuild do trunk reiniciaria a API.
+    command: >
+      watchexec
+      -w crates/oxid-api
+      -w crates/oxid-shared
+      -w migrations
+      -e rs,toml,sql
+      --restart
+      -- cargo run -p oxid-api
+    ports:
+      - "3000:3000"
+
+  web:
+    <<: *rust-dev
+    container_name: oxid-web
+    depends_on:
+      - api
+
+    volumes:
+      - ..:/app
+      - cargo-registry:/cargo
+      # EN: separate from the api's: a shared target dir serializes both cargos on
+      # EN: the same lock file, and one waits for the other on every rebuild.
+      # PT: separado do da api: target compartilhado serializa os dois cargos no
+      # PT: mesmo lock, e um espera o outro a cada rebuild.
+      - web-target:/target
+
+    working_dir: /app/crates/oxid-web
+    # EN: trunk watches files on its own — no cargo-watch needed here. The separate
+    # EN: config points the proxy at the `api` service; `--proxy-backend` on the CLI
+    # EN: would *add* a second route on /v1 and make trunk panic.
+    # PT: o trunk observa os arquivos sozinho — não precisa de cargo-watch aqui. O
+    # PT: config separado aponta o proxy para o serviço `api`; `--proxy-backend` na
+    # PT: CLI *adicionaria* uma segunda rota em /v1 e faria o trunk panicar.
+    command: trunk serve --config Trunk.docker.toml
+    ports:
+      - "8080:8080"
+
+volumes:
+  cargo-registry:
+    name: oxid-cargo-registry
+  api-target:
+    name: oxid-api-target
+  web-target:
+    name: oxid-web-target

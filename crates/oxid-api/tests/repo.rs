@@ -1,9 +1,6 @@
-//! EN: `#[sqlx::test]` creates a temporary database per test, runs the migrations
-//! EN: and drops it at the end. The path is relative to this crate — `migrations/`
-//! EN: lives at the workspace root.
-//! PT: `#[sqlx::test]` cria um banco temporário por teste, roda as migrations e o
-//! PT: dropa no fim. O caminho é relativo a este crate — `migrations/` mora na
-//! PT: raiz do workspace.
+//! `#[sqlx::test]` creates a temporary database per test, runs the migrations
+//! and drops it at the end. The path is relative to this crate — `migrations/`
+//! lives at the workspace root.
 
 use std::collections::HashSet;
 
@@ -21,10 +18,8 @@ async fn same_url_returns_the_same_id(pool: PgPool) {
     assert_eq!(first, second);
 }
 
-/// EN: The test that closes the stage. A sequential one would pass even with
-/// EN: `SELECT`-then-`INSERT` or with the CTE version — only the race tells them apart.
-/// PT: O teste que fecha a etapa. Sequencial passaria até com
-/// PT: `SELECT`-depois-`INSERT` ou com a versão em CTE — só a corrida distingue.
+/// The test that closes the stage. A sequential one would pass even with
+/// `SELECT`-then-`INSERT` or with the CTE version — only the race tells them apart.
 #[sqlx::test(migrations = "../../migrations")]
 async fn concurrent_inserts_return_the_same_id(pool: PgPool) {
     let url = "https://example.com/race";
@@ -77,8 +72,7 @@ async fn get_url_of_unknown_id_returns_none(pool: PgPool) {
     assert_eq!(repo::get_url(&pool, 999_999).await.unwrap(), None);
 }
 
-/// EN: URLs with a backslash broke when the hash used `long_url::bytea`.
-/// PT: URLs com backslash quebravam quando o hash usava `long_url::bytea`.
+/// URLs with a backslash broke when the hash used `long_url::bytea`.
 #[sqlx::test(migrations = "../../migrations")]
 async fn url_with_backslash_is_accepted(pool: PgPool) {
     let url = r"https://example.com/path\query\101";

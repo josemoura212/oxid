@@ -5,11 +5,8 @@ target = "index.html"
 port = 8080
 open = false
 
-# EN: Forwards /v1/* to the API. Without it the front on :8080 calling :3000 would
-# EN: be cross-origin and the browser would block it. With the proxy the front talks
-# EN: to its own origin — same as production behind Nginx.
-# PT: Encaminha /v1/* para a API. Sem isso o front em :8080 chamando :3000 seria
-# PT: cross-origin e o browser bloquearia. Com o proxy o front fala com a própria
-# PT: origem — igual a produção atrás do Nginx.
+# Forwards /v1/* to the API. Without it the front on :8080 calling :3000 would
+# be cross-origin and the browser would block it. With the proxy the front talks
+# to its own origin — same as production behind Nginx.
 [[proxy]]
 backend = "http://127.0.0.1:3000/v1"

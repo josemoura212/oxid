@@ -1,21 +1,13 @@
 use sqlx::PgPool;
 
-/// EN: Idempotent — the same long URL always returns the same id.
+/// Idempotent — the same long URL always returns the same id.
 ///
-/// EN: Two queries on purpose. Doing it with a CTE
-/// EN: (`WITH inserted AS (INSERT ...) SELECT ... UNION ALL SELECT ...`) fails
-/// EN: under concurrency: every part of one command shares the same snapshot, so
-/// EN: `DO NOTHING` swallows the conflict and the `SELECT` cannot see the winner's
-/// EN: row — zero rows, no error. As separate commands, `READ COMMITTED` takes a
-/// EN: fresh snapshot and the fallback sees the committed row.
-/// PT: Idempotente — a mesma URL longa sempre devolve o mesmo id.
-///
-/// PT: São duas queries de propósito. Resolver com uma CTE
-/// PT: (`WITH inserted AS (INSERT ...) SELECT ... UNION ALL SELECT ...`) falha sob
-/// PT: concorrência: todas as partes de um comando compartilham o mesmo snapshot,
-/// PT: então o `DO NOTHING` engole o conflito e o `SELECT` não enxerga a linha do
-/// PT: vencedor — zero linhas, sem erro. Em comandos separados, `READ COMMITTED`
-/// PT: pega um snapshot novo e o fallback vê a linha commitada.
+/// Two queries on purpose. Doing it with a CTE
+/// (`WITH inserted AS (INSERT ...) SELECT ... UNION ALL SELECT ...`) fails
+/// under concurrency: every part of one command shares the same snapshot, so
+/// `DO NOTHING` swallows the conflict and the `SELECT` cannot see the winner's
+/// row — zero rows, no error. As separate commands, `READ COMMITTED` takes a
+/// fresh snapshot and the fallback sees the committed row.
 pub async fn insert_url(pool: &PgPool, long_url: &str) -> Result<i64, sqlx::Error> {
     let inserted = sqlx::query_scalar!(
         r#"
@@ -33,10 +25,8 @@ pub async fn insert_url(pool: &PgPool, long_url: &str) -> Result<i64, sqlx::Erro
         return Ok(id);
     }
 
-    // EN: `url_sha256` is the same function backing the generated column — the
-    // EN: stored hash and the looked-up hash cannot drift apart.
-    // PT: `url_sha256` é a mesma função da coluna gerada — o hash gravado e o
-    // PT: hash procurado não têm como divergir.
+    // `url_sha256` is the same function backing the generated column — the
+    // stored hash and the looked-up hash cannot drift apart.
     sqlx::query_scalar!(
         r#"
         SELECT id

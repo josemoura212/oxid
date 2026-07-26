@@ -90,12 +90,9 @@ impl Environment {
     }
 }
 
-/// EN: `configuration/` lives at the workspace root, but the cwd varies:
-/// EN: `cargo run` starts at the root, `cargo test` at the crate directory.
-/// EN: Walks up the tree until it finds one.
-/// PT: `configuration/` mora na raiz do workspace, mas o cwd varia: `cargo run`
-/// PT: parte da raiz e `cargo test` parte do diretório do crate. Sobe a árvore
-/// PT: até achar.
+/// `configuration/` lives at the workspace root, but the cwd varies:
+/// `cargo run` starts at the root, `cargo test` at the crate directory.
+/// Walks up the tree until it finds one.
 fn config_dir() -> anyhow::Result<PathBuf> {
     let cwd = env::current_dir().context("could not determine the current directory")?;
 
@@ -110,8 +107,7 @@ fn config_dir() -> anyhow::Result<PathBuf> {
         })
 }
 
-/// EN: Precedence: `base.yaml` → `<environment>.yaml` → `APP_*` variables.
-/// PT: Precedência: `base.yaml` → `<ambiente>.yaml` → variáveis `APP_*`.
+/// Precedence: `base.yaml` → `<environment>.yaml` → `APP_*` variables.
 pub fn load() -> anyhow::Result<Settings> {
     let dir = config_dir()?;
     let environment = Environment::from_env()?;
@@ -119,10 +115,8 @@ pub fn load() -> anyhow::Result<Settings> {
     config::Config::builder()
         .add_source(config::File::from(dir.join("base")).required(true))
         .add_source(config::File::from(dir.join(environment.as_str())).required(true))
-        // EN: `prefix_separator` must be explicit: without it `config` reuses the
-        // EN: `separator` for the prefix and would demand `APP__APPLICATION__PORT`.
-        // PT: `prefix_separator` precisa ser explícito: sem ele o `config`
-        // PT: reaproveita o `separator` e passaria a exigir `APP__APPLICATION__PORT`.
+        // `prefix_separator` must be explicit: without it `config` reuses the
+        // `separator` for the prefix and would demand `APP__APPLICATION__PORT`.
         .add_source(
             config::Environment::with_prefix("app")
                 .prefix_separator("_")

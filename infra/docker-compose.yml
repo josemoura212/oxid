@@ -16,10 +16,8 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
 
     volumes:
-      # EN: Postgres 18+ mounts at the root, not `/data`: the image stores data in
-      # EN: a per-major-version subdirectory. With the old path it aborts the boot.
-      # PT: Postgres 18+ monta na raiz, não em `/data`: a imagem guarda os dados em
-      # PT: subdiretório por major version. Com o path antigo ela aborta o boot.
+      # Postgres 18+ mounts at the root, not `/data`: the image stores data in
+      # a per-major-version subdirectory. With the old path it aborts the boot.
       - postgres-data:/var/lib/postgresql
 
     healthcheck:

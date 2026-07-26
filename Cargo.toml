@@ -2,7 +2,13 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/oxid-api", "crates/oxid-shared"]
+members = ["crates/oxid-api", "crates/oxid-shared", "crates/oxid-web"]
+
+# EN: `oxid-web` targets wasm32; without this the root `cargo build` would try to
+# EN: compile it for the host. The front is built with `trunk` inside its folder.
+# PT: `oxid-web` compila para wasm32; sem isto o `cargo build` da raiz tentaria
+# PT: compilá-lo para o host. O front se builda com `trunk` dentro da pasta dele.
+default-members = ["crates/oxid-api", "crates/oxid-shared"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,6 +26,9 @@ oxid-shared = { path = "crates/oxid-shared" }
 anyhow = "1.0.104"
 axum = "0.8.9"
 config = { version = "0.15.25", default-features = false, features = ["yaml"] }
+console_error_panic_hook = "0.1.7"
+gloo-net = { version = "0.6.0", features = ["http"] }
+leptos = "0.8.20"
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -66,6 +75,11 @@ module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 must_use_candidate = "allow"
 return_self_not_must_use = "allow"
+# EN: no future is `Send` on wasm32 (single-threaded), so the lint is pure noise in
+# EN: oxid-web. On the back it is redundant: `tokio::spawn` already requires `Send`.
+# PT: nenhum future é `Send` em wasm32 (single-threaded), então o lint só gera ruído
+# PT: no oxid-web. No back ele é redundante: `tokio::spawn` já exige `Send`.
+future_not_send = "allow"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"

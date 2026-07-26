@@ -1,0 +1,22 @@
+[package]
+name = "oxid-web"
+description = "Front do oxid em Leptos (CSR)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+oxid-shared.workspace = true
+
+console_error_panic_hook.workspace = true
+gloo-net.workspace = true
+leptos = { workspace = true, features = ["csr"] }
+serde.workspace = true
+
+[lints]
+workspace = true

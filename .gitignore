@@ -1,5 +1,10 @@
 /target
 
-# segredos e config local — o .env.example fica versionado
+# EN: trunk build output
+# PT: saída de build do trunk
+/crates/oxid-web/dist
+
+# EN: secrets and local config — `.env.example` stays versioned
+# PT: segredos e config local — o `.env.example` fica versionado
 .env
 .env.local

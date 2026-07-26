@@ -1,0 +1,34 @@
+name: oxid
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: oxid-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-oxid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oxid}
+      POSTGRES_DB: ${POSTGRES_DB:-oxid}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    volumes:
+      - postgres-data:/var/lib/postgresql
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-oxid} -d ${POSTGRES_DB:-oxid}",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres-data:
+    name: oxid-postgres-data

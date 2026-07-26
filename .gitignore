@@ -1,1 +1,5 @@
 /target
+
+# segredos e config local — o .env.example fica versionado
+.env
+.env.local

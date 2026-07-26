@@ -18,12 +18,12 @@ Legenda: 🎯 = critério de aceite | 🦀 = conceito de Rust a dominar nesta et
 🎯 `curl localhost:3000/health` responde e o log estruturado da request aparece.
 🦀 Runtime Tokio, handlers async, extractors, por que não bloquear o runtime.
 
-## Etapa 2 — Base62 + bijeção ofuscadora
+## Etapa 2 — Base62 + bijeção ofuscadora ✅
 
-- [ ] `codec/base62.rs`: `encode(u64) -> String` e `decode(&str) -> Option<u64>`
-- [ ] `codec/obfuscate.rs`: bijeção sobre u64 (multiplicação modular por primo
+- [x] `codec/base62.rs`: `encode(u64) -> String` e `decode(&str) -> Option<u64>`
+- [x] `codec/obfuscate.rs`: bijeção sobre u64 (multiplicação modular por primo
       com inverso pré-calculado, OU rede de Feistel de 3-4 rounds)
-- [ ] Testes: roundtrip encode/decode, roundtrip obfuscate/deobfuscate,
+- [x] Testes: roundtrip encode/decode, roundtrip obfuscate/deobfuscate,
       rejeição de caracteres inválidos, casos extremos (0, u64::MAX no domínio)
 
 🎯 `cargo test` verde; dois IDs consecutivos geram códigos visualmente não relacionados.

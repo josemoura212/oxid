@@ -1,20 +1,22 @@
 #:schema https://raw.githubusercontent.com/rust-lang/cargo/refs/heads/master/crates/cargo-util-schemas/manifest.schema.json
 
-[package]
-name = "oxid"
+[workspace]
+resolver = "3"
+members = ["crates/oxid-api", "crates/oxid-shared"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
 authors = ["José Augusto <josemoura212@gmail.com>"]
-description = "Encurtador de URL de alta performance em Rust — projeto de estudo de system design"
 license = "MIT"
 repository = "https://github.com/josemoura212/oxid"
 homepage = "https://github.com/josemoura212/oxid"
-keywords = ["url-shortener", "axum", "tokio", "postgres", "redis"]
-categories = ["web-programming::http-server"]
 publish = false
 
-[dependencies]
+[workspace.dependencies]
+oxid-shared = { path = "crates/oxid-shared" }
+
 anyhow = "1.0.104"
 axum = "0.8.9"
 config = { version = "0.15.25", default-features = false, features = ["yaml"] }
@@ -26,7 +28,7 @@ tower-http = { version = "0.7.0", features = ["trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
-[dependencies.sqlx]
+[workspace.dependencies.sqlx]
 default-features = false
 features = [
     "runtime-tokio",
@@ -43,7 +45,7 @@ lto = "fat"
 codegen-units = 1
 strip = "symbols"
 
-[lints.rust]
+[workspace.lints.rust]
 warnings = "deny"
 unsafe_code = "deny"
 unused_extern_crates = "warn"
@@ -55,7 +57,7 @@ trivial_numeric_casts = "deny"
 single_use_lifetimes = "warn"
 missing_debug_implementations = "deny"
 
-[lints.clippy]
+[workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "warn", priority = -1 }
@@ -73,6 +75,6 @@ unimplemented = "deny"
 indexing_slicing = "deny"
 arithmetic_side_effects = "deny"
 
-[lints.rustdoc]
+[workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
 private_intra_doc_links = "warn"

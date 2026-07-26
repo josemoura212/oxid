@@ -9,7 +9,9 @@ database:
   username: oxid
   database_name: oxid
   require_ssl: false
-  # regra do projeto: cores do banco × 2. Pool grande não acelera — o estudo
-  # original explodiu a latência com 500 conexões num Postgres de 2 vCPUs.
+  # EN: project rule — database cores × 2. A big pool does not speed anything up:
+  # EN: the original study blew up latency with 500 connections on a 2-vCPU Postgres.
+  # PT: regra do projeto — cores do banco × 2. Pool grande não acelera nada: o
+  # PT: estudo original explodiu a latência com 500 conexões num Postgres de 2 vCPUs.
   max_connections: 8
   acquire_timeout_seconds: 3

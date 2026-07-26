@@ -1,6 +1,7 @@
 use std::{
     env,
     net::{IpAddr, SocketAddr},
+    path::PathBuf,
     time::Duration,
 };
 
@@ -82,31 +83,53 @@ impl Environment {
         match raw.to_lowercase().as_str() {
             "local" => Ok(Self::Local),
             "production" => Ok(Self::Production),
-            outro => {
-                anyhow::bail!("APP_ENVIRONMENT inválido: {outro:?}. Use `local` ou `production`")
+            other => {
+                anyhow::bail!("invalid APP_ENVIRONMENT: {other:?}. Use `local` or `production`")
             }
         }
     }
 }
 
-/// Precedência: `base.yaml` → `<ambiente>.yaml` → variáveis `APP_*`.
+/// EN: `configuration/` lives at the workspace root, but the cwd varies:
+/// EN: `cargo run` starts at the root, `cargo test` at the crate directory.
+/// EN: Walks up the tree until it finds one.
+/// PT: `configuration/` mora na raiz do workspace, mas o cwd varia: `cargo run`
+/// PT: parte da raiz e `cargo test` parte do diretório do crate. Sobe a árvore
+/// PT: até achar.
+fn config_dir() -> anyhow::Result<PathBuf> {
+    let cwd = env::current_dir().context("could not determine the current directory")?;
+
+    cwd.ancestors()
+        .map(|dir| dir.join("configuration"))
+        .find(|candidate| candidate.is_dir())
+        .with_context(|| {
+            format!(
+                "`configuration/` directory not found starting from {}",
+                cwd.display()
+            )
+        })
+}
+
+/// EN: Precedence: `base.yaml` → `<environment>.yaml` → `APP_*` variables.
+/// PT: Precedência: `base.yaml` → `<ambiente>.yaml` → variáveis `APP_*`.
 pub fn load() -> anyhow::Result<Settings> {
-    let base_path = env::current_dir().context("não foi possível determinar o diretório atual")?;
-    let dir = base_path.join("configuration");
+    let dir = config_dir()?;
     let environment = Environment::from_env()?;
 
     config::Config::builder()
         .add_source(config::File::from(dir.join("base")).required(true))
         .add_source(config::File::from(dir.join(environment.as_str())).required(true))
-        // `prefix_separator` precisa ser explícito: sem ele o `config` reaproveita
-        // o `separator` para o prefixo e passaria a exigir `APP__APPLICATION__PORT`.
+        // EN: `prefix_separator` must be explicit: without it `config` reuses the
+        // EN: `separator` for the prefix and would demand `APP__APPLICATION__PORT`.
+        // PT: `prefix_separator` precisa ser explícito: sem ele o `config`
+        // PT: reaproveita o `separator` e passaria a exigir `APP__APPLICATION__PORT`.
         .add_source(
             config::Environment::with_prefix("app")
                 .prefix_separator("_")
                 .separator("__"),
         )
         .build()
-        .context("falha ao montar as fontes de configuração")?
+        .context("failed to assemble the configuration sources")?
         .try_deserialize()
-        .context("configuração inválida")
+        .context("invalid configuration")
 }

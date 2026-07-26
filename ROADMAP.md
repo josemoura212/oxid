@@ -301,6 +301,34 @@ qualidade do banco — que faz a opção A começar na frente.
 
 ---
 
+## Pendência de CI — deploy sem secret em PR de fork
+
+**O problema:** o deploy passou a disparar em `pull_request` com `types: [closed]`, para que
+push direto na `main` (possível com o bypass de admin) não publique nada. Só que runs de
+`pull_request` **vindos de fork não recebem secrets** — sem `KUBECONFIG`, o deploy falha. O
+repo é público, então é questão de tempo até alguém abrir PR de fork.
+
+Hoje o contorno é `workflow_dispatch` na mão. As saídas de verdade, em ordem de preferência:
+
+1. **Voltar para `push: branches: [main]` e proteger o `environment: production`.**
+   Depois do merge o evento é um push no repositório base, que **recebe secrets normalmente**
+   — o problema simplesmente não existe. E o objetivo de "não publicar sem revisão" passa a
+   ser feito por quem tem essa função: *required reviewers* no environment, que segura o job
+   até alguém aprovar, inclusive num push de bypass. O job já declara
+   `environment: production`; falta só configurar a regra no GitHub.
+2. **`workflow_run`** encadeado depois do CI. Roda no contexto do repo base, com secrets, e
+   usa a definição do workflow que está na branch default. Resolve, mas acrescenta um
+   workflow e um nível de indireção para um problema que a opção 1 dissolve.
+3. **`pull_request_target`** — **não usar.** Ele roda no contexto base *com* secrets e é o
+   antipadrão clássico de CI: fazer checkout do código do fork ali entrega os segredos a
+   quem abriu o PR.
+
+- [ ] Configurar *required reviewers* no environment `production`
+- [ ] Voltar o gatilho do deploy para `push` na `main`
+- [ ] Confirmar que um push de bypass fica pendente de aprovação em vez de publicar
+
+---
+
 ## Backlog pós-v1 (não começar antes da Etapa 10)
 
 - [ ] Alta disponibilidade: 2º Nginx com keepalived/VRRP, Postgres standby com

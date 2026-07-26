@@ -43,14 +43,16 @@ Legenda: 🎯 = critério de aceite | 🦀 = conceito de Rust a dominar nesta et
 🎯 Inserir a mesma URL duas vezes retorna o MESMO id, provado por teste de integração.
 🦀 async com banco, macros do sqlx, `DATABASE_URL` em `.env`, `Result` + `?`.
 
-## Etapa 4 — Rotas de escrita e leitura
+## Etapa 4 — Rotas de escrita e leitura ✅
 
-- [ ] `error.rs`: enum `AppError` (NotFound, InvalidUrl, Db, Cache...)
-      com `impl IntoResponse` mapeando para status corretos
-- [ ] `POST /v1/shorten`: `Json<ShortenRequest>`, validação http/https (crate `url`),
-      fluxo id → obfuscate → base62 → persistir short_code → responder
-- [ ] `GET /v1/urls/{code}`: `Path<String>`, resolver e `Redirect::permanent` (301)
-- [ ] 404 limpo para código inexistente, 400 para URL inválida
+- [x] `error.rs`: enum `AppError` (NotFound, InvalidUrl, InvalidBody, Database, Internal)
+      com `impl IntoResponse`. Corpo segue **RFC 9457** (`application/problem+json`).
+- [x] `POST /v1/shorten`: `Json<ShortenRequest>`, validação http/https (crate `url`),
+      fluxo id → obfuscate → base62 → responder
+- [x] `GET /{code}` — **não** `/v1/urls/{code}`: o prefixo gastaria 9 chars numa URL
+      cujo objetivo é ser curta. 301 montado à mão (`Redirect::permanent` emite 308).
+- [x] 404 limpo para código inexistente **e para código malformado** (separar os dois
+      vazaria o formato do shortcode), 400 para URL inválida
 
 🎯 Fluxo completo via curl: encurtar → seguir redirect → chegar na URL original.
 🦀 `Deserialize`/`Serialize` com serde, `?` propagando para `AppError`, `IntoResponse`.

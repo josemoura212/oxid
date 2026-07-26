@@ -17,19 +17,26 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/oxid-api/Cargo.toml crates/oxid-api/
 COPY crates/oxid-shared/Cargo.toml crates/oxid-shared/
 COPY crates/oxid-web/Cargo.toml crates/oxid-web/
-RUN mkdir -p crates/oxid-api/src crates/oxid-shared/src crates/oxid-web/src \
+# Every target declared in a Cargo.toml needs a file here, or cargo refuses to
+# resolve — including `src/bin/`, which is easy to forget when a binary is added.
+RUN mkdir -p crates/oxid-api/src/bin crates/oxid-shared/src crates/oxid-web/src \
     && echo 'fn main() {}' > crates/oxid-api/src/main.rs \
+    && echo 'fn main() {}' > crates/oxid-api/src/bin/migrate.rs \
     && touch crates/oxid-api/src/lib.rs crates/oxid-shared/src/lib.rs \
     && echo 'fn main() {}' > crates/oxid-web/src/main.rs \
-    && cargo build --release -p oxid-api \
+    && cargo build --release -p oxid-api --bins \
     && rm -rf crates/*/src
 
 COPY .sqlx .sqlx
+COPY migrations migrations
 COPY crates crates
 
-# Touch the sources so cargo does not reuse the stub artifacts from the layer above.
-RUN touch crates/oxid-api/src/main.rs crates/oxid-api/src/lib.rs \
-    && cargo build --release -p oxid-api
+# Touch every source, not just the entry points: cargo decides what to rebuild by
+# mtime, and COPY preserves the timestamps from the build context. Miss one crate
+# and it silently links the empty stub compiled in the layer above — which shows
+# up as "no `ShortenResponse` in the root", not as a cache problem.
+RUN find crates -name '*.rs' -exec touch {} + \
+    && cargo build --release -p oxid-api --bins
 
 # ---
 
@@ -46,6 +53,9 @@ USER 10001
 
 WORKDIR /app
 COPY --from=builder /build/target/release/oxid /usr/local/bin/oxid
+# Migrations run as a Job before the rollout, from this same image — so the
+# schema and the code that expects it are always the same build.
+COPY --from=builder /build/target/release/oxid-migrate /usr/local/bin/oxid-migrate
 COPY configuration configuration
 
 EXPOSE 3000

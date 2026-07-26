@@ -20,6 +20,10 @@ path = "src/lib.rs"
 name = "oxid"
 path = "src/main.rs"
 
+[[bin]]
+name = "oxid-migrate"
+path = "src/bin/migrate.rs"
+
 [dependencies]
 oxid-shared.workspace = true
 

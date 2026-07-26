@@ -187,6 +187,51 @@ como `application/problem+json`:
 ocorrência específica. Erros de banco nunca chegam ao cliente — nomes de tabela,
 coluna e constraint entregariam um mapa do schema.
 
+## Observabilidade
+
+As métricas são servidas em **porta própria**, nunca no router público:
+
+```bash
+curl http://127.0.0.1:9090/metrics
+```
+
+A separação é deliberada. O Traefik encaminha para este serviço tudo que não é o
+front, então uma rota `/metrics` publicaria na internet volume de requisições,
+distribuição de latência e comportamento do cache. No cluster a porta é declarada
+no Deployment e fica de fora do Service.
+
+Prometheus e Grafana vivem num compose separado, para o `up` do dia a dia
+continuar leve:
+
+```bash
+docker compose --env-file .env \
+  -f infra/docker-compose.yml \
+  -f infra/docker-compose.local.yml \
+  -f infra/docker-compose.observability.yml up
+```
+
+| Serviço | URL |
+|---|---|
+| Grafana (anônimo, admin) | http://127.0.0.1:3001 |
+| Prometheus | http://127.0.0.1:9091 |
+
+O dashboard é provisionado por arquivo em `infra/grafana/provisioning/` — p50/p95/p99
+por rota, req/s por status, hit rate do cache, lookups por desfecho e conexões do
+pool. Um dashboard montado na interface viveria só no volume do Grafana e não
+passaria por revisão em PR.
+
+Três detalhes que valem saber:
+
+- **O label de rota vem do path casado**, não da URL. Em `/{code}` os dois diferem
+  a cada request, e rotular com o path real criaria uma série temporal por
+  shortcode.
+- **Os buckets de latência são escolhidos, não os padrão.** A meta da Etapa 10 é
+  p95 < 50 ms, então a resolução fica abaixo de 100 ms, que é onde as respostas
+  caem.
+- **Os gauges do pool são lidos no momento do scrape**, então nunca estão mais
+  velhos que ele. `total - idle` é o número que importa: grudado em
+  `max_connections` significa fila no pool, não no banco.
+
 ## Desenvolvimento
 
 ```bash

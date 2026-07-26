@@ -184,6 +184,50 @@ Errors follow [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457), served as
 occurrence. Database errors never reach the client — table, column and constraint
 names would hand out a map of the schema.
 
+## Observability
+
+Metrics are served on **their own port**, never on the public router:
+
+```bash
+curl http://127.0.0.1:9090/metrics
+```
+
+That separation is deliberate. Traefik forwards everything that is not the front
+end to this service, so a `/metrics` route would publish request volumes, latency
+distributions and cache behaviour to the internet. In the cluster the port is
+declared on the Deployment and left out of the Service.
+
+Prometheus and Grafana are a separate compose file, so the everyday `up` stays
+light:
+
+```bash
+docker compose --env-file .env \
+  -f infra/docker-compose.yml \
+  -f infra/docker-compose.local.yml \
+  -f infra/docker-compose.observability.yml up
+```
+
+| Service | URL |
+|---|---|
+| Grafana (anonymous, admin) | http://127.0.0.1:3001 |
+| Prometheus | http://127.0.0.1:9091 |
+
+The dashboard is provisioned from `infra/grafana/provisioning/` — p50/p95/p99 per
+route, requests per second by status, cache hit rate, lookups by outcome, and pool
+connections. A dashboard clicked together in the UI would live only in Grafana's
+volume and could never be reviewed in a pull request.
+
+Three details worth knowing:
+
+- **The route label comes from the matched path**, not the URL. On `/{code}` those
+  differ on every request, and labelling with the real path would create one time
+  series per shortcode.
+- **Latency buckets are chosen, not default.** Stage 10 targets p95 under 50 ms,
+  so the resolution sits below 100 ms where the answers actually land.
+- **Pool gauges are read at scrape time**, so they are never staler than the
+  scrape. `total - idle` is the number that matters: pinned at `max_connections`
+  means requests are queueing on the pool rather than on the database.
+
 ## Development
 
 ```bash

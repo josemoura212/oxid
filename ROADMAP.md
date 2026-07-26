@@ -180,22 +180,20 @@ pela API. Duas saídas, e elas não são equivalentes:
 **Limite conhecido:** com CSR, o crawler recebe o HTML estático em inglês qualquer que seja o
 leitor. `hreflang` e título traduzido só valem de verdade com SSR, que está fora de escopo.
 
-## Etapa 6 — Configuração e dimensionamento
-
-Antecipada na Etapa 3 — só o último item continua aberto.
+## Etapa 6 — Configuração e dimensionamento ✅
 
 - [x] Toda config fora do código: `base.yaml` → `<ambiente>.yaml` → `APP_*`
       (YAML em vez de `.env`; ver `docs/DECISOES.md`, Etapa 3, decisão 6)
 - [x] `.env.example` documentado
 - [x] Pool do Postgres pequeno por padrão — `max_connections: 8`
 - [x] Timeouts de acquire do pool (3 s) e de conexão do Redis (2 s)
-- [ ] **`statement_timeout` no Postgres** — o que falta. Sem ele, uma query travada segura
-      uma das 8 conexões por tempo indeterminado; bastam 8 para o serviço parar de
-      responder. Vai em `PgConnectOptions::options([("statement_timeout", …)])`, para valer
-      por conexão em vez de depender de config do servidor
-- [ ] Reavaliar `idle_timeout` e `max_lifetime` do pool na mesma passada
+- [x] **`statement_timeout` (3 s)** via `PgConnectOptions::options`, aplicado por conexão em
+      vez de depender de config do servidor — o mesmo banco pode servir uma migration ou uma
+      sessão manual que legitimamente demore mais
+- [ ] Reavaliar `idle_timeout` e `max_lifetime` do pool — só faz sentido com número na mão,
+      depois da Etapa 9
 
-🎯 App sobe em ambiente limpo só com o YAML preenchido; pool visível nas métricas (Etapa 7).
+🎯 ✅ App sobe em ambiente limpo só com o YAML preenchido; pool visível nas métricas.
 🦀 Structs de config com serde, `Duration`, fail-fast no bootstrap.
 
 **Por que o `statement_timeout` importa mais aqui do que parece:** com pool grande, uma query
@@ -204,14 +202,38 @@ ou seja, na Etapa 9, quando o custo de descobrir é bem maior.
 
 ## Etapa 7 — Observabilidade
 
-- [ ] `metrics` + `metrics-exporter-prometheus`, endpoint `/metrics`
-- [ ] Histogramas de latência por rota, contadores hit/miss, gauge do pool
-- [ ] Prometheus + Grafana no docker-compose scrapando app, postgres exporter,
-      redis exporter, nginx exporter
-- [ ] Dashboard mínimo: p50/p95/p99 por rota, hit rate, conexões do pool, CPU por serviço
+- [x] `metrics` + `metrics-exporter-prometheus`, endpoint `/metrics` **em porta própria**
+- [x] Histograma de latência por rota, contador `cache_lookups_total` por desfecho,
+      gauges do pool
+- [x] Prometheus + Grafana em `infra/docker-compose.observability.yml`
+- [x] Dashboard provisionado por arquivo: p50/p95/p99 por rota, req/s por status, hit rate,
+      lookups por desfecho, conexões do pool
+- [ ] Exporters de Postgres, Redis e Nginx — entram junto com a Etapa 8, quando o Nginx
+      existir
+- [ ] Prometheus no cluster raspando os pods (hoje só o compose local)
 
 🎯 Dá para responder "onde está o gargalo?" olhando um único dashboard.
-🦀 Instrumentação com spans do tracing, macros de métricas, custo de instrumentar.
+🦀 Macros de métricas, custo de instrumentar, cardinalidade de labels.
+
+**`/metrics` não é rota do router público.** O Traefik encaminha para a API tudo que não é
+o front, então uma rota `/metrics` estaria legível na internet — entregando volume de
+requisições, distribuição de latência e comportamento do cache a quem pedisse. Vai num
+listener separado (9090), declarado no Deployment e **ausente do Service**.
+
+**O label de rota vem do `MatchedPath`, não do path.** Em `/{code}` os dois diferem por
+construção: o path real é uma string diferente a cada request, então rotular com ele criaria
+uma série temporal por shortcode e derrubaria o Prometheus muito antes do serviço. É a única
+linha do middleware que não pode estar errada.
+
+**Buckets escolhidos, não os padrão.** O conjunto default se espalha por uma faixa que este
+serviço nunca usa. A meta da Etapa 10 é p95 < 50 ms e um hit de cache responde em
+milissegundos de um dígito — a resolução tem que estar embaixo de 100 ms, que é onde as
+respostas caem.
+
+**Gauges do pool amostrados no scrape**, não por task com timer: lidos na hora do scrape
+nunca estão mais velhos que o próprio scrape, e não há um segundo relógio para raciocinar.
+`total - idle` é o número que importa; grudado em `max_connections` significa fila no pool,
+não no banco.
 
 ## Etapa 8 — Topologia completa
 
@@ -360,6 +382,76 @@ que ele não dizia é que "bom caso" e "vale o custo agora" são perguntas difer
 **Restrição de infra que vale para as duas opções:** o nó é **2 vCPU / 12 GB, arm64**,
 e já roda Postgres, Redis, 2 réplicas da API e o nginx. É esse orçamento — e não a
 qualidade do banco — que faz a opção A começar na frente.
+
+## Etapa 13 — Extensão de navegador
+
+Um clique no ícone encurta a página aberta e põe o link curto na área de transferência.
+É onde o produto encosta no uso real: hoje encurtar exige sair da página, abrir o oxid,
+copiar a URL e colar. A extensão apaga esses quatro passos.
+
+Depois da Etapa 11 de propósito — sem conta a extensão só encurta; com conta o link cai na
+lista da pessoa, que é o que a torna útil no dia a dia.
+
+- [ ] Manifest V3 (Chrome/Edge) e WebExtensions (Firefox) a partir do mesmo código
+- [ ] Ação do ícone: URL da aba ativa → `POST /v1/shorten` → clipboard → badge de confirmação
+- [ ] Menu de contexto ("encurtar este link"), além da página atual
+- [ ] Publicar nas duas lojas
+
+🎯 Encurtar a aba atual sem sair dela, com o link já copiado.
+
+**Permissão mínima é decisão de design, não detalhe.** `activeTab` dá acesso à aba **apenas
+no clique**, e é tudo que esta extensão precisa. Pedir `host_permissions: ["<all_urls>"]` —
+o caminho mais fácil — é pedir para ler qualquer página que a pessoa visite: atrasa a
+revisão das lojas e transforma um comprometimento da extensão num vazamento do histórico
+inteiro. `activeTab` + `clipboardWrite`, e nada mais.
+
+**Duas coisas que precisam mudar no servidor:**
+
+1. **CORS.** Hoje não existe, porque o front é mesma origem e nunca precisou. A extensão
+   chama de `chrome-extension://…`, que é outra origem. Ou a API ganha um `CorsLayer` em
+   `/v1/shorten`, ou a extensão declara `host_permissions` para `oxid.uk` e faz o fetch do
+   service worker, que escapa do CORS. A primeira é a honesta; a segunda troca configuração
+   de servidor por permissão mais ampla no cliente.
+2. **O rate limit por IP fica frágil.** Ele existe para conter abuso de escrita, e a
+   extensão multiplica escritas por pessoa. Em rede com NAT todo mundo divide o IP e um
+   usuário ativo consome a cota dos outros — o mesmo problema de chave compartilhada já
+   visto no `X-Forwarded-For` da Etapa 5. Com a Etapa 11 pronta, limitar por conta quando
+   houver sessão e por IP só no caminho anônimo.
+
+**A credencial da extensão não é o cookie de sessão.** Extensão não compartilha cookie com o
+site de forma confiável entre navegadores. O caminho é o token de API que ficou como
+alternativa preterida na Etapa 11: a pessoa gera um, cola na extensão, e ele vale como
+credencial daquele cliente — revogável sem derrubar a sessão do navegador.
+
+## Etapa 14 — Painel do administrador
+
+Uma página autenticada com os números do produto — criados nas últimas 24 h, total
+acumulado, top códigos por acesso, taxa de erro — ao lado dos números de sistema que a
+Etapa 7 já coleta.
+
+Depois das Etapas 11 e 12: sem sessão não há como restringir o acesso, e sem os eventos de
+clique metade dos números do produto não existe.
+
+- [ ] Papel de administrador em `users` — sem isso, "autenticado" viraria "qualquer conta"
+- [ ] `GET /v1/admin/stats`: criados por período, total, taxa de erro, top códigos
+- [ ] Página no front, atrás de sessão com esse papel
+- [ ] Números de sistema vindos do Prometheus, não recalculados no Postgres
+
+🎯 Responder "quantos links nas últimas 24 h" e "onde está o gargalo" numa tela só.
+
+**A separação que não pode ser perdida.** São duas fontes com naturezas diferentes: os
+números de produto saem do Postgres/ClickHouse (verdade transacional, tem de ser exata) e os
+de sistema saem do Prometheus (série temporal amostrada, aproximada por construção). Um
+painel que mistura as duas como se fossem a mesma coisa mente nas duas — cada uma tem que
+ser lida de onde vive, e ficar claro qual é qual.
+
+**Cuidado com `COUNT(*)` nas últimas 24 h.** Numa tabela projetada para 365 bilhões de
+linhas, essa consulta varre índice a cada carregamento do painel. Vira contador incremental
+ou tabela de agregado diário — a mesma decisão de rollup que a Etapa 12 já enfrenta.
+
+**Grafana já resolve os números de sistema.** Este painel existe para o que ele não tem:
+dado de produto. Reimplementar gráfico de latência aqui seria trabalho duplicado com
+resultado pior — o caminho é embutir o painel do Grafana ou apontar para ele.
 
 ---
 

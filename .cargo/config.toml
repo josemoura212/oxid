@@ -1,0 +1,15 @@
+# EN: `#[sqlx::test]` reads DATABASE_URL at runtime to create each test's temporary
+# EN: database. The `query!` macros read `.env`, but that only covers compile time.
+# EN:
+# EN: `force = false`: the environment wins, so you can point at another database
+# EN: without editing this file. The credential here is the same as
+# EN: `configuration/local.yaml` — Postgres on localhost, not a secret.
+# PT: `#[sqlx::test]` lê DATABASE_URL em runtime para criar o banco temporário de
+# PT: cada teste. As macros `query!` leem o `.env`, mas isso só vale em tempo de
+# PT: compilação.
+# PT:
+# PT: `force = false`: o ambiente tem precedência, então dá para apontar para outro
+# PT: banco sem editar este arquivo. A credencial aqui é a mesma de
+# PT: `configuration/local.yaml` — Postgres em localhost, não é segredo.
+[env]
+DATABASE_URL = { value = "postgres://oxid:oxid@localhost:5432/oxid", force = false }

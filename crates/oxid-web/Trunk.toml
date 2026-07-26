@@ -1,5 +1,9 @@
 [build]
 target = "index.html"
+# Same prefix production uses (see infra/Dockerfile.web). Keeping them equal is
+# what lets index.html hold an absolute /assets/ path for the font preloads —
+# with the default `/` here, those links would 404 in development only.
+public_url = "/assets/"
 
 [serve]
 port = 8080

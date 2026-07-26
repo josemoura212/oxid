@@ -5,6 +5,9 @@
 
 [build]
 target = "index.html"
+# Must match Trunk.toml and production, or the absolute font preloads in
+# index.html point at nothing.
+public_url = "/assets/"
 
 [serve]
 address = "0.0.0.0"

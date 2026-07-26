@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT long_url\n        FROM urls\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "long_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "urls",
+            "name": "long_url"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c6810dab8cb1da132b96648eeaef5b3194920b8cefbc2eaf8be91202ab09a7f1"
+}

@@ -1,5 +1,9 @@
 {
-  "evenBetterToml.schema.associations": {
-    "^(.*[/\\\\])?Cargo\\.toml$": "https://raw.githubusercontent.com/rust-lang/cargo/refs/heads/master/crates/cargo-util-schemas/manifest.schema.json"
-  }
+  // Cargo's manifest schema does not model workspace inheritance for
+  // `rust-version` — every other inheritable field does. That makes
+  // `rust-version.workspace = true` fail the whole `[package]` table, and the
+  // editor dumps the entire manifest as one error. Cargo itself accepts it:
+  // `cargo metadata` resolves the workspace without complaint. No point keeping a
+  // validator that is wrong about the thing it validates.
+  "evenBetterToml.schema.enabled": false
 }

@@ -30,18 +30,28 @@ const LATENCY_BUCKETS: &[f64] = &[
     0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
 ];
 
+/// The configured builder, shared by the process-wide recorder and by tests.
+///
+/// Separate from [`install`] for one reason: without the bucket configuration
+/// the exporter emits a summary with quantiles instead of a histogram, so a test
+/// that built its own plain builder would be asserting against something this
+/// service never runs.
+pub fn builder() -> anyhow::Result<PrometheusBuilder> {
+    PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full("http_request_duration_seconds".to_owned()),
+            LATENCY_BUCKETS,
+        )
+        .context("invalid latency buckets")
+}
+
 /// Installs the recorder process-wide and returns the handle that renders it.
 ///
 /// Must run before anything records a measurement: metrics emitted while no
 /// recorder is installed are dropped silently, which looks exactly like a route
 /// that is never called.
 pub fn install() -> anyhow::Result<PrometheusHandle> {
-    PrometheusBuilder::new()
-        .set_buckets_for_metric(
-            Matcher::Full("http_request_duration_seconds".to_owned()),
-            LATENCY_BUCKETS,
-        )
-        .context("invalid latency buckets")?
+    builder()?
         .install_recorder()
         .context("failed to install the Prometheus recorder")
 }

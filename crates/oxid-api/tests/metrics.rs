@@ -9,8 +9,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 
 use axum::{Router, body::Body, http::Request, routing::get};
 use metrics::with_local_recorder;
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle, PrometheusRecorder};
-use oxid::metrics::{install, serve_on, track};
+use metrics_exporter_prometheus::{PrometheusHandle, PrometheusRecorder};
+use oxid::metrics::{builder, install, serve_on, track};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tower::ServiceExt;
@@ -18,8 +18,13 @@ use tower::ServiceExt;
 /// A recorder that is *not* installed globally, so each test owns its registry.
 /// Without that, counters would leak between tests and the assertions would
 /// depend on the order they ran in.
+///
+/// Built from the same `builder()` the service installs. A plain
+/// `PrometheusBuilder::new()` would lack the bucket configuration and export a
+/// summary with quantiles instead of a histogram — the tests would then be
+/// describing something that never runs in production.
 fn local_recorder() -> (PrometheusRecorder, PrometheusHandle) {
-    let recorder = PrometheusBuilder::new().build_recorder();
+    let recorder = builder().unwrap().build_recorder();
     let handle = recorder.handle();
     (recorder, handle)
 }

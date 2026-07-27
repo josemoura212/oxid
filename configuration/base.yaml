@@ -2,6 +2,9 @@ application:
   host: 127.0.0.1
   port: 3000
   base_url: http://127.0.0.1:3000
+  # Separate listener, deliberately not routed by Traefik. 9090 is the Prometheus
+  # convention for a scrape target.
+  metrics_port: 9090
 
 database:
   host: localhost
@@ -13,6 +16,11 @@ database:
   # the original study blew up latency with 500 connections on a 2-vCPU Postgres.
   max_connections: 8
   acquire_timeout_seconds: 3
+  # Generous next to the queries this service actually runs — a primary-key
+  # lookup and a single insert — and that is the point: it is a backstop against
+  # a query that hangs, not a performance target. Without it one stuck query
+  # holds a connection indefinitely, and eight of them leave the pool empty.
+  statement_timeout_ms: 3000
 
 cache:
   host: localhost

@@ -41,6 +41,11 @@ web-sys = { version = "0.3.103", features = [
     "Window",
 ] }
 http-body-util = "0.1.3"
+metrics = "0.24.6"
+# `default-features = false` drops the crate's own HTTP listener, which would
+# pull in a second hyper stack and rustls just to serve one text endpoint. The
+# recorder handle renders to a string, and axum already serves it.
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 leptos = "0.8.20"
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }

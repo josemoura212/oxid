@@ -1,0 +1,21 @@
+global:
+  # 15 s is Prometheus' own default and the right starting point: rendering the
+  # registry walks every series, so a 1 s scrape spends real CPU on the service
+  # being measured. Stages 9 and 10 may want it tighter for a short window —
+  # that is a deliberate trade, not the default.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: oxid-api
+    static_configs:
+      # `host.docker.internal` because the API runs on the host during
+      # development, not as a compose service. On Linux this resolves through
+      # the `extra_hosts` mapping Docker adds for it.
+      - targets: ["host.docker.internal:9090"]
+        labels:
+          service: api
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

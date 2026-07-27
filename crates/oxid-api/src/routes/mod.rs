@@ -46,6 +46,11 @@ pub fn router(state: Arc<AppState>, rate_limit: RateLimitSettings) -> anyhow::Re
         // `/v1/shorten` still match themselves.
         .route("/{code}", get(resolve::resolve))
         .layer(TraceLayer::new_for_http())
+        // Outside the TraceLayer, so the measured span covers the same work the
+        // trace describes, and after the routes, so `MatchedPath` is already in
+        // the extensions — a layer added before them would only ever see
+        // "unmatched".
+        .layer(axum::middleware::from_fn(crate::metrics::track))
         .with_state(state))
 }
 

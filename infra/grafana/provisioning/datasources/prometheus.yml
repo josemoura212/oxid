@@ -1,0 +1,11 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Service name and internal port — not the published one, which only exists
+    # on the host.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

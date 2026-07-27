@@ -23,11 +23,22 @@ pub struct ApplicationSettings {
     pub host: IpAddr,
     pub port: u16,
     pub base_url: String,
+    /// Metrics live on their own port, never on the public router.
+    ///
+    /// Traefik forwards everything that is not the front end to this service, so
+    /// a `/metrics` route would publish request volumes, latency distributions
+    /// and cache behaviour to the internet. A second listener is reachable from
+    /// inside the cluster and nowhere else.
+    pub metrics_port: u16,
 }
 
 impl ApplicationSettings {
     pub const fn addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
+    }
+
+    pub const fn metrics_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.host, self.metrics_port)
     }
 }
 
@@ -41,6 +52,14 @@ pub struct DatabaseSettings {
     pub require_ssl: bool,
     pub max_connections: u32,
     pub acquire_timeout_seconds: u64,
+    /// Ceiling for a single query, applied per connection.
+    ///
+    /// With a small pool this is not a nicety. A query that hangs holds one of
+    /// the connections for as long as it hangs, and there are only
+    /// `max_connections` of them: eight stuck queries and the service stops
+    /// answering entirely. The timeout turns "everything is down" into "that
+    /// one query failed".
+    pub statement_timeout_ms: u64,
 }
 
 impl DatabaseSettings {
@@ -51,6 +70,10 @@ impl DatabaseSettings {
             PgSslMode::Prefer
         };
 
+        // `options` sets Postgres runtime parameters on every connection the
+        // pool opens. Doing it here rather than on the server keeps the ceiling
+        // with the application that needs it: the same database can serve a
+        // migration or a manual session that legitimately runs longer.
         PgConnectOptions::new()
             .host(&self.host)
             .port(self.port)
@@ -58,6 +81,7 @@ impl DatabaseSettings {
             .password(self.password.expose_secret())
             .database(&self.database_name)
             .ssl_mode(ssl_mode)
+            .options([("statement_timeout", self.statement_timeout_ms.to_string())])
     }
 
     pub const fn acquire_timeout(&self) -> Duration {

@@ -1,0 +1,197 @@
+# Grafana in the cluster, reading the Prometheus that is already there.
+#
+# Nothing here is public: the Service is a NodePort only because Traefik runs
+# outside the cluster and has no other way in, and Traefik only routes it under
+# a hostname that requires a login. Prometheus itself is never exposed — it has
+# no authentication of its own, and putting it behind a password would mean
+# putting a password in front of something that was designed to sit on a private
+# network.
+#
+# The admin password comes from a Secret created by hand, never from this file:
+#
+#   kubectl -n monitoring create secret generic grafana-admin \
+#     --from-literal=password="$(openssl rand -base64 24)"
+#
+# Read it back when you need it:
+#
+#   kubectl -n monitoring get secret grafana-admin \
+#     -o jsonpath='{.data.password}' | base64 -d; echo
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        # In-cluster DNS for the Prometheus the operator manages. Same data the
+        # cluster's own dashboards read.
+        url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+        isDefault: true
+        editable: false
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: monitoring
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: oxid
+        type: file
+        disableDeletion: false
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: false
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: the PVC is ReadWriteOnce, so a second pod would
+  # sit Pending waiting for a volume the first one still holds.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        # Grafana's own uid. Set at pod level so the mounted PVC ends up owned
+        # by it rather than by root.
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.3.1
+
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: password
+            # Without this, links Grafana generates point at localhost.
+            #
+            # The hostname is the one detail in these manifests worth keeping out
+            # of a public repository: Cloudflare serves a wildcard certificate,
+            # so subdomains do not show up in Certificate Transparency, and
+            # publishing this would hand out a name nobody can find otherwise.
+            # Substituted at apply time — see this directory's README.
+            - name: GF_SERVER_ROOT_URL
+              value: https://GRAFANA_HOST
+            # The opposite of the local compose file, and deliberately so: that
+            # one is anonymous because it only exists on a laptop. This one is
+            # reachable from the internet.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            # Nothing here is worth phoning home about.
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+              value: "false"
+
+          ports:
+            - containerPort: 3000
+              name: http
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+
+          # The node is 2 vCPU / 12 GB and already runs Postgres, Redis, two API
+          # replicas, nginx and the whole kube-prometheus stack. Grafana is a
+          # dashboard, not the product — it gets what is left.
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 384Mi }
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: grafana
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+            optional: true
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  # NodePort because Traefik lives outside the cluster and reaches the node
+  # through host.docker.internal. 30093 is the next free one after oxid's
+  # 30091 and 30092.
+  type: NodePort
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: http
+      nodePort: 30093

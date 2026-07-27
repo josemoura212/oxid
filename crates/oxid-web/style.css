@@ -45,6 +45,12 @@
 
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* One track shared by the bar and the content, so they always align.
+     Wider than the 46rem it started at, which left most of a laptop screen
+     empty, and still capped: past roughly 75 characters a line of prose gets
+     hard to follow back to the next one. */
+  --track: min(60rem, 100% - 3rem);
 }
 
 @media (prefers-color-scheme: light) {
@@ -72,25 +78,62 @@ body {
   color: var(--fg);
   font: 16px/1.6 var(--prose);
   -webkit-font-smoothing: antialiased;
+  /* Column so the bar sits at the top and the shell takes whatever is left,
+     which is what lets short content centre instead of hugging the header. */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Top bar */
+
+.topbar {
+  border-bottom: 1px solid var(--edge);
+}
+
+.topbar-inner {
+  /* Same track as the content below, so the wordmark lines up with the page
+     rather than floating at the window edge. */
+  width: var(--track);
+  margin-inline: auto;
+  min-height: 3.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.icon-link {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.35rem;
+  color: var(--muted);
+}
+
+.icon-link:hover {
+  color: var(--fg);
+}
+
+.icon {
+  display: block;
 }
 
 .shell {
-  width: min(46rem, 100% - 2.5rem);
+  width: var(--track);
   margin-inline: auto;
-  padding-block: clamp(2rem, 8vh, 4.5rem);
+  /* Starts right under the bar instead of being centred in the leftover
+     height: on a tall screen, centring pushed the headline into the middle of
+     the page and left a band of empty space above it. */
+  padding-block: 2.25rem 3rem;
   display: grid;
   gap: 2.25rem;
-}
-
-/* Masthead */
-
-.masthead {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 1rem;
-  padding-bottom: 0.85rem;
-  border-bottom: 1px solid var(--edge);
 }
 
 .wordmark {
@@ -408,3 +451,4 @@ body {
     transition: none;
   }
 }
+

@@ -11,6 +11,11 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
+# Two binaries live here, so `cargo run -p oxid-api` is ambiguous without this.
+# The dev container runs exactly that command and had been restart-looping on
+# the error ever since `oxid-migrate` was added — visible only in the logs,
+# because watchexec kept the container "Up" while nothing listened.
+default-run = "oxid"
 
 [lib]
 name = "oxid"

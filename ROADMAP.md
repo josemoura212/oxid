@@ -481,6 +481,24 @@ funcionaria, e mesmo se funcionasse deixaria de fora justamente o clippy e o LCO
 é a afirmação mais rígida sobre este código — clippy com `pedantic` em deny. Se o Sonar
 reportasse critério próprio, passariam a existir dois padrões em desacordo.
 
+## Pendência de infra — superfície de rede do nó
+
+Revisar o que o nó aceita de fora e reduzir ao mínimo, de modo que todo tráfego
+entre pelo caminho pretendido em vez de por atalhos.
+
+- [ ] Revisar as regras de entrada na **Security List da Oracle**, não no
+      `iptables` local: o k3s reescreve regras de iptables e a alteração some num
+      restart. O proxy roda no mesmo host e alcança os serviços por dentro
+- [ ] Restringir a entrada HTTP/HTTPS aos **ranges da Cloudflare**
+      (`cloudflare.com/ips`), para que a origem só aceite tráfego vindo da CDN
+
+**Cloudflare Tunnel — depois da Etapa 10, não antes.** Ele é melhor: zero portas
+de entrada e IP de origem nunca exposto. Mas fecha o caminho que as Etapas 9 e 10
+precisam, porque o k6 tem que medir a origem sem a CDN no meio — medir através
+dela mediria a CDN. Com tudo fechado, o gerador de carga teria que rodar dentro
+da VPS, disputando CPU com o alvo. É o erro que o estudo original cometeu e que
+este projeto existe para não repetir.
+
 ## Pendência de CI — quem segura um deploy não revisado
 
 **O que foi tentado e revertido:** disparar o deploy em `pull_request` com `types: [closed]`,

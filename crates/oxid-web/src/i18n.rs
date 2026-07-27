@@ -135,6 +135,7 @@ pub struct Strings {
     pub chars_saved: &'static str,
     pub remove_prefix: &'static str,
     pub language_group: &'static str,
+    pub repository: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -157,6 +158,7 @@ static EN: Strings = Strings {
     chars_saved: "characters saved",
     remove_prefix: "Remove from this list:",
     language_group: "Language",
+    repository: "Source code on GitHub",
 };
 
 static PT_BR: Strings = Strings {
@@ -179,6 +181,7 @@ static PT_BR: Strings = Strings {
     chars_saved: "caracteres economizados",
     remove_prefix: "Remover desta lista:",
     language_group: "Idioma",
+    repository: "Código-fonte no GitHub",
 };
 
 #[cfg(test)]

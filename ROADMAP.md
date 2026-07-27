@@ -481,6 +481,37 @@ funcionaria, e mesmo se funcionasse deixaria de fora justamente o clippy e o LCO
 é a afirmação mais rígida sobre este código — clippy com `pedantic` em deny. Se o Sonar
 reportasse critério próprio, passariam a existir dois padrões em desacordo.
 
+## Pendência de segurança — NodePorts abertos na internet
+
+Descoberto em 2026-07-27, ao publicar o Grafana. Os três NodePorts respondem
+direto no IP do nó:
+
+```
+http://168.75.92.187:30091/health     → 200   (API)
+http://168.75.92.187:30092/healthz    → 200   (front)
+http://168.75.92.187:30093/api/health → 200   (Grafana)
+```
+
+Quem usa esse caminho **contorna Cloudflare e Traefik**: sem TLS, sem os headers
+de segurança, sem WAF e sem o rate limit da CDN. No Grafana é pior — significa
+formulário de login trafegando em HTTP puro.
+
+O que **não** está exposto: a porta 9090 das métricas não responde de fora
+(timeout confirmado). O listener separado fez o trabalho dele.
+
+- [ ] Fechar 30091-30093 na **Security List da Oracle**, não no `iptables` local:
+      o k3s reescreve regras de iptables e a alteração some num restart. O Traefik
+      roda no mesmo host e alcança por `host.docker.internal`, então nada quebra
+- [ ] Restringir 80/443 aos **ranges da Cloudflare** (`cloudflare.com/ips`). Hoje
+      qualquer um alcança a origem por IP com `Host: oxid.uk` e pula a CDN inteira
+
+**Cloudflare Tunnel — depois da Etapa 10, não antes.** Ele é melhor: zero portas
+de entrada, IP de origem nunca exposto. Mas fecha o caminho que as Etapas 9 e 10
+precisam — o k6 tem que bater **direto no NodePort**, justamente porque medir
+através da Cloudflare mediria a CDN. Com tudo fechado, o gerador de carga teria
+que rodar dentro da VPS, disputando CPU com o alvo. É o erro que o estudo
+original cometeu e que este projeto existe para não repetir.
+
 ## Pendência de CI — quem segura um deploy não revisado
 
 **O que foi tentado e revertido:** disparar o deploy em `pull_request` com `types: [closed]`,

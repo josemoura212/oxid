@@ -1,0 +1,33 @@
+# Puts the oxid pods in front of the Prometheus that already runs in this
+# cluster (kube-prometheus-stack, namespace `monitoring`, installed long before
+# this project existed).
+#
+# A PodMonitor, not a ServiceMonitor: the API's Service deliberately publishes
+# only port 3000, because it is what the NodePort — and therefore Traefik, and
+# therefore the internet — reaches. A ServiceMonitor would have needed a second
+# Service carrying 9090, adding a path to the metrics that does not need to
+# exist. PodMonitor scrapes the pods directly and leaves the Service alone.
+#
+# `release: prometheus` is not decoration: that Prometheus selects monitors by
+# this exact label, so without it this file is ignored in silence.
+#
+#   kubectl apply -f docs/k8s-monitoring/10-podmonitor.yaml
+
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: oxid-api
+  namespace: oxid
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: api
+
+  podMetricsEndpoints:
+    # The name given to the container port in the Deployment, not a number:
+    # if the port ever moves, the name follows it.
+    - port: metrics
+      path: /metrics
+      interval: 15s

@@ -23,11 +23,6 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
 
-    # Docker Desktop provides this name automatically; on Linux it has to be
-    # mapped, and without it the scrape target simply never resolves.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       # Enough history to compare a load-test run against the one before it, and

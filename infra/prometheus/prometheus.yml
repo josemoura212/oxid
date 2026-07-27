@@ -9,10 +9,15 @@ global:
 scrape_configs:
   - job_name: oxid-api
     static_configs:
-      # `host.docker.internal` because the API runs on the host during
-      # development, not as a compose service. On Linux this resolves through
-      # the `extra_hosts` mapping Docker adds for it.
-      - targets: ["host.docker.internal:9090"]
+      # The compose service name, resolved on the compose network. An earlier
+      # version pointed at `host.docker.internal`, which assumed the API ran on
+      # the host — it does not, it runs as a container here, so nothing was ever
+      # scraped.
+      #
+      # Port 9090 is never published to the host, and does not need to be: the
+      # point of the separate listener is that it stays reachable from inside
+      # and nowhere else.
+      - targets: ["api:9090"]
         labels:
           service: api
 

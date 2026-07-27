@@ -1,8 +1,16 @@
 apiVersion: 1
 
+# Changing the `uid` of a datasource that Grafana has already provisioned makes
+# it abort at boot with "data source not found": provisioning matches on name and
+# will not migrate the uid. If that happens, drop the volume —
+# `docker volume rm oxid-grafana-data` — since nothing here is worth keeping.
 datasources:
   - name: Prometheus
     type: prometheus
+    # Fixed uid so the dashboard can name it. Left to Grafana it would be
+    # generated, and a dashboard shipped in git cannot reference a value that
+    # only exists after the container starts.
+    uid: prometheus
     access: proxy
     # Service name and internal port — not the published one, which only exists
     # on the host.

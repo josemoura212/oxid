@@ -264,10 +264,12 @@ medição da Etapa 9 acontecer sem ruído.**
 - [x] Quanto do nó é do serviço e quanto é de vizinho
 - [x] Réplicas: **ficam 2, pela continuidade em crash**, com o motivo escrito por
       extenso — não somam throughput e não são necessárias para rolling update
-- [ ] Decidir o que fazer com o peso de cgroup da árvore do Kubernetes (ver abaixo)
+- [x] Decidido o que fazer com o peso de cgroup da árvore do Kubernetes: **nada, e
+      medir como está** — ver abaixo
 
-🎯 O teto de requisições por segundo do nó é conhecido e a camada que satura primeiro
-   está identificada — com número medido, não com suposição.
+🎯 A Etapa 9 pode medir sabendo o que está medindo: linha de base registrada, cada
+   parâmetro com sua camada e o sintoma que justificaria mexer nele, e nenhuma mudança
+   feita às cegas.
 
 **Os números medidos ficam fora do git**, em `docs/`. São a medição de **um** host, com
 a capacidade e os vizinhos dele; para quem clona o repositório, baseline alheio não é
@@ -298,11 +300,18 @@ teto de uma fatia que ninguém dimensionou de propósito.
 Vale para qualquer cluster que divida o host com Docker — que é o caso de toda máquina
 onde k3s convive com um proxy gerenciado por fora.
 
-**A decisão pendente, com as opções:** medir como está e interpretar o número à luz
-disto; subir o peso da árvore do cluster; ou baixar o de quem divide o host com ela. A
-recomendação é a primeira para a Etapa 9, e transformar a segunda numa iteração medida
-da Etapa 10 — mudar antes de medir é exatamente o que o método proíbe. Mas é decisão,
-não detalhe: ela determina o que o teste significa.
+**Decidido: medir como está.** As opções eram três — deixar quieto, subir o peso da
+árvore do cluster, ou baixar o de quem divide o host com ela. Ficou a primeira, por dois
+motivos. O peso não é defeito do instrumento, é a condição em que o serviço de fato
+roda: corrigi-lo antes seria medir um sistema que não existe. E há chance concreta de a
+CPU não saturar, o que encerra a discussão sem custo nenhum. Se saturar e a fatia for o
+limite, isso vira a **primeira iteração da Etapa 10**, com antes e depois medidos — que
+é onde está o aprendizado.
+
+**Quando for mexer, mexa do lado de fora.** Alterar o `cpu.weight` da árvore do cluster
+diretamente não gruda: o kubelet reconcilia e a mudança some, o mesmo problema do
+`iptables` reescrito pelo k3s. O ponto estável é o outro lado da disputa —
+`systemctl set-property` no serviço que divide o host, que ninguém reconcilia por cima.
 
 **Duas réplicas no mesmo nó não somam throughput.** Um único pod já enxerga todos os
 cores do nó e os usa — o runtime do Tokio abre um worker por core visível. Dois pods são

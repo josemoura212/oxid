@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 
 use oxid::repo;
+use oxid_shared::MAX_URL_LEN;
 use sqlx::PgPool;
 use tokio::task::JoinSet;
 
@@ -89,17 +90,20 @@ async fn url_with_backslash_is_accepted(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn url_above_the_limit_is_rejected(pool: PgPool) {
-    let too_long = format!("https://example.com/{}", "a".repeat(2100));
+    let too_long = format!("https://example.com/{}", "a".repeat(MAX_URL_LEN));
 
     assert!(repo::insert_url(&pool, &too_long).await.is_err());
 }
 
+/// Guards the CHECK itself, at the boundary, going straight to the repository
+/// rather than through the handler — the handler now rejects earlier, and this
+/// has to keep proving the database would refuse on its own.
 #[sqlx::test(migrations = "../../migrations")]
 async fn url_at_the_limit_is_accepted(pool: PgPool) {
     let prefix = "https://example.com/";
-    let padding = "a".repeat(2048_usize.saturating_sub(prefix.len()));
+    let padding = "a".repeat(MAX_URL_LEN.saturating_sub(prefix.len()));
     let at_limit = format!("{prefix}{padding}");
 
-    assert_eq!(at_limit.len(), 2048);
+    assert_eq!(at_limit.len(), MAX_URL_LEN);
     assert!(repo::insert_url(&pool, &at_limit).await.is_ok());
 }

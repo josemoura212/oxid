@@ -15,7 +15,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use oxid::{cache::Cache, configuration::RateLimitSettings, routes, state::AppState};
-use oxid_shared::{PROBLEM_JSON, ProblemDetails, ShortenResponse};
+use oxid_shared::{MAX_URL_LEN, PROBLEM_JSON, ProblemDetails, ShortenResponse};
 use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -180,16 +180,34 @@ async fn malformed_urls_are_rejected(pool: PgPool) {
     }
 }
 
-/// The 2048-char CHECK lives in Postgres, so this arrives as a database error.
-/// It must surface as 400 — the client sent something invalid, the server is fine.
+/// Too long is the client's mistake, so it must be a 400 — never a 500 leaking
+/// a database error.
 #[sqlx::test(migrations = "../../migrations")]
 async fn url_above_the_length_limit_is_a_400_not_a_500(pool: PgPool) {
     let app = app(pool);
-    let too_long = format!("https://example.com/{}", "a".repeat(2100));
+    let too_long = format!("https://example.com/{}", "a".repeat(MAX_URL_LEN));
 
     let response = app.oneshot(post_shorten(&too_long)).await.unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// The boundary itself has to be accepted. Written against `MAX_URL_LEN` rather
+/// than a literal, so raising the limit cannot leave a test asserting the old
+/// one — which is how a limit ends up enforced in two places with two values.
+#[sqlx::test(migrations = "../../migrations")]
+async fn url_exactly_at_the_length_limit_is_accepted(pool: PgPool) {
+    let app = app(pool);
+    let prefix = "https://example.com/";
+    let at_limit = format!(
+        "{prefix}{}",
+        "a".repeat(MAX_URL_LEN.saturating_sub(prefix.len()))
+    );
+    assert_eq!(at_limit.len(), MAX_URL_LEN);
+
+    let response = app.oneshot(post_shorten(&at_limit)).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

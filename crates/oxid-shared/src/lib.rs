@@ -3,6 +3,20 @@ use serde::{Deserialize, Serialize};
 /// Media type mandated by RFC 9457 for problem responses.
 pub const PROBLEM_JSON: &str = "application/problem+json";
 
+/// Longest URL the service accepts.
+///
+/// Lives in the shared crate so the two sides cannot disagree: the API rejects
+/// past it, the error message quotes it, and the front end can warn before
+/// sending anything. The database keeps its own CHECK at the same number as a
+/// backstop — belt and braces, not duplication of intent.
+///
+/// 8192 is not arbitrary. Nothing in this stack was pressed by the old 2048:
+/// Cloudflare allows 128 KB of headers, and the unique index is on a 32-byte
+/// hash rather than the URL itself. The real ceiling is the *destination*
+/// server — nginx answers 414 above roughly 8 KB of request line plus headers,
+/// so a longer link would be one that does not work where it points.
+pub const MAX_URL_LEN: usize = 8192;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShortenRequest {
     pub url: String,

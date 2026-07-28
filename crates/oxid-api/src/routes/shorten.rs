@@ -4,7 +4,7 @@ use axum::{
     Json,
     extract::{State, rejection::JsonRejection},
 };
-use oxid_shared::{ShortenRequest, ShortenResponse};
+use oxid_shared::{MAX_URL_LEN, ShortenRequest, ShortenResponse};
 use url::Url;
 
 use crate::{codec, error::AppError, repo, state::AppState};
@@ -25,6 +25,18 @@ fn validate(raw: &str) -> Result<Url, AppError> {
 
     if !url.has_host() {
         return Err(AppError::InvalidUrl("url must have a host"));
+    }
+
+    // Measured after parsing, because normalization can lengthen the string —
+    // `as_str` is what actually gets stored, so it is what has to fit.
+    //
+    // The database keeps the same CHECK, and this does not make it redundant:
+    // without this the only way to learn a URL is too long is to send it to
+    // Postgres and be refused, spending one of eight pooled connections to say
+    // no. Rejecting here also keeps the message and the limit reading from one
+    // constant instead of drifting apart.
+    if url.as_str().len() > MAX_URL_LEN {
+        return Err(AppError::UrlTooLong);
     }
 
     Ok(url)

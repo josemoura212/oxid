@@ -3,18 +3,25 @@ use axum::{
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use oxid_shared::{PROBLEM_JSON, ProblemDetails};
+use oxid_shared::{MAX_URL_LEN, PROBLEM_JSON, ProblemDetails};
 use thiserror::Error;
 
-/// Postgres `check_violation`. The only CHECK on `urls` is the 2048-char limit on
+/// Postgres `check_violation`. The only CHECK on `urls` is the length limit on
 /// `long_url`, so hitting it means the client sent something too long — a 400,
 /// not a 500.
+///
+/// The route rejects oversized URLs before they reach Postgres, so this path is
+/// now the backstop rather than the usual one: it still fires for anything that
+/// writes to the table without going through the handler.
 const CHECK_VIOLATION: &str = "23514";
 
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("{0}")]
     InvalidUrl(&'static str),
+
+    #[error("url exceeds the maximum length of {MAX_URL_LEN} characters")]
+    UrlTooLong,
 
     #[error("malformed request body: {0}")]
     InvalidBody(String),
@@ -32,7 +39,9 @@ pub enum AppError {
 impl AppError {
     fn status(&self) -> StatusCode {
         match self {
-            Self::InvalidUrl(_) | Self::InvalidBody(_) => StatusCode::BAD_REQUEST,
+            Self::InvalidUrl(_) | Self::InvalidBody(_) | Self::UrlTooLong => {
+                StatusCode::BAD_REQUEST
+            }
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Database(err) if is_check_violation(err) => StatusCode::BAD_REQUEST,
             Self::Database(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -48,6 +57,10 @@ impl AppError {
             Self::InvalidUrl(_) => "https://oxid.uk/problems/invalid-url",
             Self::InvalidBody(_) => "https://oxid.uk/problems/invalid-body",
             Self::NotFound => "https://oxid.uk/problems/not-found",
+            // Same identifier whether the length was caught in the handler or by
+            // the database: from the client's side it is one failure, and the
+            // `type` is what clients match on.
+            Self::UrlTooLong => "https://oxid.uk/problems/url-too-long",
             Self::Database(err) if is_check_violation(err) => {
                 "https://oxid.uk/problems/url-too-long"
             }
@@ -61,6 +74,7 @@ impl AppError {
             Self::InvalidUrl(_) => "Invalid URL",
             Self::InvalidBody(_) => "Invalid request body",
             Self::NotFound => "Shortcode not found",
+            Self::UrlTooLong => "URL too long",
             Self::Database(err) if is_check_violation(err) => "URL too long",
             Self::Database(_) | Self::Internal(_) => "Internal error",
         }
@@ -74,8 +88,11 @@ impl AppError {
             Self::InvalidUrl(msg) | Self::Internal(msg) => (*msg).to_owned(),
             Self::InvalidBody(msg) => msg.clone(),
             Self::NotFound => "no url is registered under this shortcode".to_owned(),
+            // Both spellings of the same failure quote `MAX_URL_LEN`, so the
+            // number in the message cannot drift away from the number enforced.
+            Self::UrlTooLong => self.to_string(),
             Self::Database(err) if is_check_violation(err) => {
-                "url exceeds the maximum length of 2048 characters".to_owned()
+                format!("url exceeds the maximum length of {MAX_URL_LEN} characters")
             }
             Self::Database(_) => "the request could not be completed".to_owned(),
         }

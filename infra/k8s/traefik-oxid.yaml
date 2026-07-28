@@ -4,7 +4,7 @@
 # This does NOT go into the cluster. Traefik runs outside k3s, in Docker managed
 # by Coolify, and reaches the node through host.docker.internal on the NodePort.
 #
-# `certResolver: letsencrypt`, same as sensor.mangatrix.net — which also sits
+# `certResolver: letsencrypt`, same as another host on this node that also sits
 # behind the Cloudflare proxy and renews fine, so the ACME HTTP-01 challenge does
 # reach the origin through it.
 #

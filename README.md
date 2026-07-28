@@ -268,9 +268,11 @@ migrations as a Kubernetes `Job`, and rolls out API then front end **by digest**
 — never by `latest`, which cannot tell you what is running nor what to roll back
 to. CI itself runs on every pull request.
 
-The cluster is a single-node k3s box (Oracle Ampere, arm64). Traefik runs outside
-the cluster and reaches it over a NodePort. Details in `infra/k8s/README.md`
-(local only, same `docs/` caveat).
+`infra/k8s/` holds manifests you can adapt: namespace, Postgres, Redis, API,
+front end, the migration `Job` and the RBAC the deploy uses. What is deliberately
+**not** here is the glue to one particular environment — proxy routes, hostnames,
+node measurements. Every deployment differs there, and a stranger's wiring is
+noise rather than a starting point.
 
 ## Roadmap
 

@@ -251,53 +251,99 @@ build multi-stage em `--release` já está no `infra/Dockerfile` desde o primeir
 O que sobrou de real virou o tema: **conhecer o teto do que já existe e deixar a
 medição da Etapa 9 acontecer sem ruído.**
 
-- [ ] Sysctls e limites de file descriptor — `tcp_tw_reuse`, faixa de portas efêmeras,
-      `somaxconn`, `nofile`. O item que sobreviveu inteiro, com uma pergunta nova:
-      **em qual das três camadas cada um vale**. Host, container do proxy e pod são
-      namespaces diferentes, e ajustar no lugar errado não faz nada e parece que fez
-- [ ] A conta do pool: réplicas × `max_connections` contra o que o banco sustenta.
-      Documentar a conta aqui; o número final sai da medição da Etapa 10, não de chute
-- [ ] `requests` e `limits` de CPU e memória revisados. Sob saturação, quem não
-      reservou é o primeiro a ser estrangulado — e a API hoje reserva `cpu: 100m`
-- [ ] Registrar quanto do nó é do oxid e quanto é de vizinho, com número
-- [ ] Decidir 1 ou 2 réplicas com o critério escrito por extenso, seja qual for a
-      decisão. Sem isso vira cargo cult na próxima vez que alguém olhar
+- [x] Levantar sysctls e limites de file descriptor nas três camadas, com a coluna que
+      faltava: **quais são por network namespace**. Host, container do proxy e pod não
+      compartilham os de rede, e um namespace novo nasce com o default do kernel, não
+      com o valor atual do host. Ajustar no lugar errado não faz nada e parece que fez
+- [x] Limites de file descriptor: verificar antes de ajustar. Runtimes de container
+      costumam subir com limites altos e os processos herdam — o `ulimit -n` baixo que
+      aparece numa sessão SSH é do shell de login e não vale para serviço nenhum
+- [x] A conta do pool: réplicas × `max_connections` contra o **paralelismo útil** do
+      banco, que é menor que o número de cores. O número final sai da Etapa 10
+- [x] `requests` e `limits` revisados — a conclusão foi não mudar antes de medir
+- [x] Quanto do nó é do serviço e quanto é de vizinho
+- [x] Réplicas: **ficam 2, pela continuidade em crash**, com o motivo escrito por
+      extenso — não somam throughput e não são necessárias para rolling update
+- [ ] Decidir o que fazer com o peso de cgroup da árvore do Kubernetes (ver abaixo)
 
 🎯 O teto de requisições por segundo do nó é conhecido e a camada que satura primeiro
    está identificada — com número medido, não com suposição.
 
-**Duas réplicas no mesmo nó não somam throughput.** O Tokio de um único pod já enxerga
-os dois cores e os usa; dois pods são dois runtimes disputando os mesmos dois cores.
-O que elas dão é **continuidade durante crash** — um panic não derruba o serviço. E
-note que rolling update não é argumento: com `maxUnavailable: 0` e `maxSurge: 1`, uma
-réplica única também sobe a nova antes de matar a velha.
+**Os números medidos ficam fora do git**, em `docs/`. São a medição de **um** host, com
+a capacidade e os vizinhos dele; para quem clona o repositório, baseline alheio não é
+dado, é ruído. O que fica aqui é o método e o que ele revelou de generalizável.
 
-**O custo das duas réplicas está no pool, não na memória.** Cada pod consome ~1 MiB em
-repouso, o que é irrelevante. Mas `max_connections: 8` no `base.yaml` vezes 2 réplicas
-são 16 conexões contra um Postgres que divide 2 vCPU com todo o resto do host — quatro
-vezes o que a regra "cores do banco × 2" recomendaria. Conexões ociosas não custam;
-conexões *ativas* além do que o banco consegue executar em paralelo não viram
-throughput, viram troca de contexto.
+**Nada foi ajustado, de propósito.** O método das Etapas 9 e 10 é hipótese → medição →
+**uma** mudança → confirmação. Vários parâmetros mexidos antes da primeira medição
+destroem a capacidade de atribuir qualquer melhora a qualquer causa, e todo ajuste feito
+às cegas vira "sempre foi assim" na leitura seguinte. Cada candidato fica registrado ao
+lado do sintoma que o justificaria, e não antes dele.
+
+**O achado que muda como ler a Etapa 9: as `requests` do Kubernetes não valem contra
+quem está fora dele.** Elas ordenam a disputa *dentro* da árvore de cgroup do cluster.
+Se o mesmo host roda containers por fora — um proxy, outros projetos, qualquer coisa em
+Docker —, a disputa entre as duas árvores é decidida um nível acima, onde o kubelet não
+manda.
+
+E o peso que ele coloca lá tende a ser **menor** que o padrão de qualquer serviço do
+sistema. O kubelet expressa a capacidade do nó na escala antiga de *shares*; a conversão
+para a escala do cgroup v2 comprime esse valor bem abaixo do 100 com que nasce uma unit
+comum do systemd. Não é política, é perda de impedância entre duas escalas.
+
+Isso convive com o `Allocatable` do nó, que é o que o scheduler usa e está correto
+dentro do mundo dele. Os dois números discordam, e é o do cgroup que a carga encontra.
+Sem isso registrado, o teto da Etapa 9 seria lido como "o teto do serviço" quando é o
+teto de uma fatia que ninguém dimensionou de propósito.
+
+Vale para qualquer cluster que divida o host com Docker — que é o caso de toda máquina
+onde k3s convive com um proxy gerenciado por fora.
+
+**A decisão pendente, com as opções:** medir como está e interpretar o número à luz
+disto; subir o peso da árvore do cluster; ou baixar o de quem divide o host com ela. A
+recomendação é a primeira para a Etapa 9, e transformar a segunda numa iteração medida
+da Etapa 10 — mudar antes de medir é exatamente o que o método proíbe. Mas é decisão,
+não detalhe: ela determina o que o teste significa.
+
+**Duas réplicas no mesmo nó não somam throughput.** Um único pod já enxerga todos os
+cores do nó e os usa — o runtime do Tokio abre um worker por core visível. Dois pods são
+dois runtimes disputando os mesmos cores. O que elas dão é **continuidade durante
+crash**: um panic não derruba o serviço. E note que rolling update não é argumento — com
+`maxUnavailable: 0` e `maxSurge: 1`, uma réplica única também sobe a nova antes de matar
+a velha.
+
+**O custo das duas réplicas está no pool, não na memória.** Um pod ocioso consome
+memória desprezível, mas `max_connections` vale **por processo**: duas réplicas dobram o
+teto de conexões contra o mesmo banco. Conexões ociosas não custam; conexões *ativas*
+além do que o banco executa em paralelo não viram throughput, viram troca de contexto.
+
+**A regra "cores do banco × 2" esconde o que importa.** O pool não precisa caber no
+número de cores, precisa caber no *paralelismo útil*. Pela lei de Little, o pool
+necessário é `taxa × tempo de serviço` — com escritas de poucos milissegundos e um cache
+que absorve a leitura, isso dá um número de um dígito, não dezenas. Os dois erros têm o
+mesmo relógio e por isso se confundem: pool pequeno demais **enfileira**, e a espera só
+estoura no timeout de acquire, muito depois de o p95 ir embora; pool grande demais
+**esconde** a saturação do banco até virar timeout de statement. É por isso que o gauge
+de conexões do pool (Etapa 7) vale mais aqui do que a latência — colado no máximo
+significa fila no pool, longe dele com latência alta significa problema no banco.
 
 **O critério 50/50 foi descartado, e não só por causa do kube-proxy.** É verdade que
 ele sorteia por conexão e não por requisição, então com keep-alive uma conexão sorteada
 carrega centenas de requisições atrás dela e o desvio se amplifica — foi o que a
-medição de tráfego real mostrou, em 60/40. Mas o problema mais fundo é outro:
-**simetria entre dois processos na mesma CPU não significa nada.** Não há isolamento de
-falha de máquina, não há soma de capacidade, não há nada que o 50/50 garanta. Perseguir
-esse número seria otimizar uma métrica sem consequência.
+medição de tráfego real mostrou. Mas o problema mais fundo é outro: **simetria entre
+dois processos na mesma CPU não significa nada.** Não há isolamento de falha de máquina,
+não há soma de capacidade, não há nada que o 50/50 garanta. Perseguir esse número seria
+otimizar uma métrica sem consequência.
 
-**O nó não é do oxid.** Os mesmos 2 vCPU servem cerca de vinte containers de outros
-projetos, além do proxy, do Prometheus e do Grafana. A meta da Etapa 9 — 11.574
-leituras/s — são ~5.800 req/s por core, num core compartilhado. Isso não invalida a
-medição, mas muda o que ela significa: o teto que vai aparecer é o teto **deste** nó
-como ele está, e é preciso saber quanto dele é vizinho antes de atribuir o gargalo ao
-código.
+**O nó pode não ser só do serviço, e isso muda o que a medição significa.** Se o host
+serve outras coisas — outros projetos, o proxy, a própria observabilidade —, o teto que
+a Etapa 9 encontra é o teto **daquele** nó como ele está, não o do código. Saber quanto
+da capacidade é vizinho é pré-requisito para atribuir o gargalo a alguém. Antes de
+medir, contabilizar; depois de medir, subtrair.
 
-**O observador entra na conta do observado.** O Prometheus é hoje o maior consumidor de
-CPU do cluster inteiro — mais que todo o oxid somado. Sob carga ele raspa séries mais
-caras e consome mais, exatamente quando a CPU é o recurso disputado. Vale medir o custo
-dele durante o teste, não só depois.
+**O observador entra na conta do observado.** Vale conferir quanto o próprio Prometheus
+consome: numa máquina pequena ele compete de igual para igual com o que está sendo
+medido, e sob carga raspa séries mais caras justamente quando a CPU é o recurso
+disputado. Medir o custo dele **durante** o teste, não só depois.
 
 ## Etapa 9 — Teste de carga com k6
 
@@ -406,7 +452,7 @@ e desligar (`off`) durante as Etapas 9-10, para a analytics não contaminar a me
 
 | | **A. Postgres particionado** | **B. ClickHouse** |
 |---|---|---|
-| Infra nova | nenhuma | mais um banco no nó de 2 vCPU |
+| Infra nova | nenhuma | mais um banco no mesmo nó |
 | Escrita | `COPY`/insert em lote na tabela particionada por mês | `async_insert` ou lote de 10k+ |
 | Agregação sobre milhões | índice ajuda até certo ponto; depois exige tabela de rollup | é o que ele faz de melhor |
 | Retenção | `DROP PARTITION` | `TTL` na tabela |
@@ -435,9 +481,10 @@ que ele não dizia é que "bom caso" e "vale o custo agora" são perguntas difer
    Remover a URL da lista **não** devolve o 301 — e não poderia, porque um 301 já
    cacheado no browser é irreversível.
 
-**Restrição de infra que vale para as duas opções:** o nó é **2 vCPU / 12 GB, arm64**,
-e já roda Postgres, Redis, 2 réplicas da API e o nginx. É esse orçamento — e não a
-qualidade do banco — que faz a opção A começar na frente.
+**Restrição de infra que vale para as duas opções:** o alvo é um nó **pequeno e
+único**, que já roda Postgres, Redis, as réplicas da API e o front. É esse orçamento —
+e não a qualidade do banco — que faz a opção A começar na frente. Num cluster com nós
+sobrando, a conta muda e o ClickHouse deixa de custar o que custa aqui.
 
 ## Etapa 13 — Extensão de navegador
 
@@ -537,55 +584,38 @@ funcionaria, e mesmo se funcionasse deixaria de fora justamente o clippy e o LCO
 é a afirmação mais rígida sobre este código — clippy com `pedantic` em deny. Se o Sonar
 reportasse critério próprio, passariam a existir dois padrões em desacordo.
 
-## Pendência de infra — superfície de rede do nó
+## Superfície de rede — o que generalizou
 
-Revisada em 2026-07-27, ao publicar o Grafana e notar que os serviços do cluster
-respondem direto no nó, por fora do proxy: sem TLS, sem os headers de segurança e
-sem o rate limit da CDN. Num painel com formulário de login isso é pior — a senha
-viaja em claro.
+O trabalho em si é de infra deste deploy e vive em `docs/`, fora do git: depende do
+provedor, do proxy e de quais serviços dividem o host. Fica aqui o que vale para
+qualquer um.
 
-Reduzir o que o nó aceita de fora ao mínimo, de modo que todo tráfego entre pelo
-caminho pretendido em vez de por atalhos.
+**Regra órfã é regra aberta.** Metade das regras de entrada deste nó não tinha
+processo nenhum do outro lado — sobras de um serviço desinstalado e de aplicações
+que publicam só dentro da rede do Docker. Não são inócuas: são portas esperando
+alguém subir algo naquele número. Cruzar o que o firewall abre com o que de fato
+escuta é exercício de dez minutos, e devolve mais do que parece.
 
-- [x] Revisar as regras de entrada na **Security List da Oracle**, não no
-      `iptables` local: o k3s reescreve regras de iptables e a alteração some num
-      restart. O proxy roda no mesmo host e alcança os serviços por dentro, então
-      fechar a porta de fora não quebra o caminho normal
-- [x] Remover a **faixa** de portas de serviço. Enquanto era faixa, todo Service
-      novo nascia público sem ninguém decidir isso — e nenhum deles precisava
-      dela, porque o proxy chega por dentro
-- [ ] Restringir a entrada HTTP/HTTPS aos **ranges da Cloudflare**
-      (`cloudflare.com/ips`), para que a origem só aceite tráfego vindo da CDN.
-      Hoje alcançar a origem por IP com o `Host` certo pula a CDN inteira.
-      Todo hostname roteado já está atrás do proxy, inclusive para o desafio ACME,
-      então a restrição não tira caminho de ninguém
-- [ ] Restringir o **plano de controle do cluster** a origens conhecidas. É a
-      porta que entrega o cluster, não uma aplicação — e a única cuja exposição
-      não é compensada por nada mais na pilha. Presa ao modelo de deploy: hoje o
-      CI empurra de fora, e restringir por origem exigiria runner próprio ou
-      inverter para o cluster puxar
-- [ ] Fechar as portas dos **painéis de administração**, que respondem por porta
-      própria contornando o proxy — sendo que o mesmo painel já é servido por
-      domínio, com TLS e os headers. A porta direta é só a versão sem nenhum deles
+**Faixa aberta é decisão que ninguém tomou.** Com a faixa inteira de NodePort
+liberada, todo Service novo nasce público sem ninguém escolher isso. E nenhum
+precisava: um proxy no mesmo host alcança os serviços por dentro — tráfego que
+entra pela bridge do runtime de container e nunca passa pelo firewall da interface
+pública. Fechar não quebrou nada, verificado nos dois sentidos.
 
-**Metade das regras não tinha processo do outro lado.** O levantamento cruzou o
-que a Security List abria com o que de fato escutava no host: regras de um serviço
-já desinstalado e de aplicações que só publicam dentro da rede do Docker. Uma
-regra órfã não é inócua — é uma porta esperando alguém subir algo naquele número.
-
-**A Security List é a única camada, e isso muda o peso de cada regra.** Vários
-serviços do host escutam em `0.0.0.0` (kubelet, exporter de nó, o proxy de um
-banco) e estão fora da internet só porque nenhuma regra os alcança. Não há
-firewall de host segurando nada, pelo motivo já dito: o k3s reescreve o iptables.
+**Onde não há firewall de host, a regra do provedor é a camada inteira.** Vários
+serviços de um nó Kubernetes escutam em `0.0.0.0` — kubelet, exporter de nó — e
+ficam fora da internet só porque nada os alcança. Compensar com `iptables` local
+não funciona: o k3s reescreve as regras e a alteração some no primeiro restart.
 Cada regra aberta é a exposição inteira, sem segunda linha.
 
-O que **não** está exposto, e vale registrar: a porta das métricas não responde de
-fora (timeout confirmado). O listener separado da Etapa 7 fez o trabalho dele.
+**Redigir endereço é higiene, não controle.** Tirar um IP do repositório impede
+reintroduzi-lo e para de apontar o alvo, mas não recupera o que já esteve público
+nem o que o DNS entrega de graça — um hostname do cluster vale o mesmo que o IP,
+porque um `dig` converte um no outro. Sanitização parcial não sanitiza. O controle
+é a regra de firewall; até ela existir, o endereço é conhecido.
 
-**Endereços não vão neste arquivo.** O repositório é público, e escrever aqui qual
-porta responde em qual endereço economiza reconhecimento para quem procurar. Os
-números concretos vivem na Security List e nos manifests; este bloco registra a
-decisão, não o alvo.
+O que **não** ficou exposto, e vale registrar: a porta das métricas não responde de
+fora. O listener separado da Etapa 7 fez o trabalho dele.
 
 **Cloudflare Tunnel — depois da Etapa 10, não antes.** Ele é melhor: zero portas
 de entrada e IP de origem nunca exposto. Mas fecha o caminho que as Etapas 9 e 10
@@ -593,12 +623,6 @@ precisam, porque o k6 tem que medir a origem sem a CDN no meio — medir atravé
 dela mediria a CDN. Com tudo fechado, o gerador de carga teria que rodar dentro
 da VPS, disputando CPU com o alvo. É o erro que o estudo original cometeu e que
 este projeto existe para não repetir.
-
-**O que a redação não resolve.** Tirar endereços daqui impede reintroduzi-los e
-para de apontar o alvo, mas não recupera o que já esteve num repositório público
-nem o que o DNS entrega de graça. O controle é a regra de firewall; a redação é
-higiene. Enquanto os itens acima não fecharem, o endereço deve ser tratado como
-conhecido.
 
 ## Pendência de CI — quem segura um deploy não revisado
 

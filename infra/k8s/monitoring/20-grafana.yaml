@@ -151,8 +151,8 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 30
 
-          # The node is 2 vCPU / 12 GB and already runs Postgres, Redis, two API
-          # replicas, nginx and the whole kube-prometheus stack. Grafana is a
+          # Sized for a small node that already runs the database, the cache, the
+          # API replicas and the whole kube-prometheus stack. Grafana is a
           # dashboard, not the product — it gets what is left.
           resources:
             requests: { cpu: 50m, memory: 128Mi }
@@ -185,9 +185,8 @@ metadata:
   name: grafana
   namespace: monitoring
 spec:
-  # NodePort because Traefik lives outside the cluster and reaches the node
-  # through host.docker.internal. 30093 is the next free one after oxid's
-  # 30091 and 30092.
+  # NodePort for the same reason as the application Services: the proxy lives
+  # outside the cluster. Pick a port that does not collide with them.
   type: NodePort
   selector:
     app: grafana

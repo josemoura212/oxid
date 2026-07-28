@@ -31,9 +31,9 @@ concurrency:
 jobs:
   build:
     name: build ${{ matrix.name }}
-    # Native ARM runner, not amd64 + QEMU. The k3s node is an Oracle Ampere box,
-    # so the images have to be arm64 — and emulating it costs 2-3x the build time
-    # on a release profile that is already slow. Free on public repositories.
+    # Native ARM runner, not amd64 + QEMU. The target node is arm64, so the
+    # images have to be — and emulating it costs 2-3x the build time on a release
+    # profile that is already slow. Free on public repositories.
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -113,7 +113,7 @@ jobs:
       - uses: azure/setup-kubectl@v5
 
       # A kubeconfig for a ServiceAccount scoped to the `oxid` namespace — not
-      # the cluster admin one. See infra/k8s/README.md for how it is minted.
+      # the cluster admin one. Minted by infra/k8s/mint-kubeconfig.sh.
       - name: Configure kubectl
         env:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}

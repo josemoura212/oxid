@@ -272,9 +272,11 @@ migrations como `Job` do Kubernetes e faz o rollout da API e depois do front
 **por digest** — nunca por `latest`, que não diz o que está rodando nem para onde
 voltar. O CI roda em todo pull request.
 
-O cluster é um k3s de nó único (Oracle Ampere, arm64). O Traefik roda fora do
-cluster e alcança o nó por NodePort. Detalhes em `infra/k8s/README.md` (local,
-mesma ressalva do `docs/`).
+Em `infra/k8s/` estão os manifests que dá para adaptar: namespace, Postgres,
+Redis, API, front, o `Job` de migração e o RBAC que o deploy usa. O que
+**não** está ali, de propósito, é a cola com um ambiente específico — rotas de
+proxy, hostnames, medições do nó. Cada deploy difere justamente aí, e a fiação
+de outra pessoa é ruído, não ponto de partida.
 
 ## Roadmap
 

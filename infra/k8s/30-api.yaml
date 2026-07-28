@@ -104,9 +104,9 @@ metadata:
   name: api
   namespace: oxid
 spec:
-  # NodePort because Traefik runs outside the cluster (Coolify, in Docker) and
-  # reaches the node through host.docker.internal. 30091 is the next one free —
-  # 30088, 30089 and 30090 are taken.
+  # NodePort because the reverse proxy in this setup runs outside the cluster and
+  # reaches the node directly. With an ingress controller inside the cluster,
+  # ClusterIP plus an Ingress is the better shape — see the README.
   type: NodePort
   selector:
     app: api

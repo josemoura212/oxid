@@ -1,62 +1,27 @@
-# Deploy no k3s
+# Kubernetes manifests
 
-Notas de deploy do oxid. Este diretório fica fora do git (`docs/` está no
-`~/.gitignore_global`).
+Enough to run oxid on any cluster. They are the manifests this project actually
+deploys with, not a sketch — but they stop where every environment starts to
+differ.
 
-## Topologia
-
-```
-internet → Cloudflare (proxy ON, Origin Certificate)
-             ↓
-           Traefik (Docker, fora do cluster, gerenciado pelo Coolify)
-             │  host.docker.internal:30091
-             ↓
-           Service NodePort  →  2 pods da API
-                                   ├→ Service postgres  (StatefulSet + PVC local-path)
-                                   └→ Service redis     (Deployment, sem PVC)
-```
-
-O Traefik **não** roda dentro do k3s — é o do Coolify, em Docker. Por isso o
-Service é `NodePort` e não `Ingress`: ele alcança o nó por
-`host.docker.internal`, o mesmo padrão de `k8s-learn` (30088),
-`github-readme-stats` (30089) e `sensor-api` (30090).
-
-## Estado (2026-07-26)
-
-| | |
+| File | What it is |
 |---|---|
-| k3s | v1.34.5, nó único |
-| StorageClass | `local-path` (default, `WaitForFirstConsumer`) |
-| NodePort do oxid | 30091 |
-| DNS | `oxid.uk` e `*.oxid.uk` → nó, **com proxy** |
-| TLS | Cloudflare Origin Certificate, em `cert.yaml` do Coolify |
+| `00-namespace.yaml` | the `oxid` namespace |
+| `10-postgres.yaml` | StatefulSet + headless Service + PVC |
+| `20-redis.yaml` | Deployment + Service, no volume — the cache is disposable |
+| `30-api.yaml` | API Deployment, ConfigMap and Service |
+| `40-deploy-access.yaml` | ServiceAccount, Role and RoleBinding for CI |
+| `50-migrate-job.yaml` | migration Job, templated on `IMAGE_REF` |
+| `60-web.yaml` | front end Deployment and Service |
+| `monitoring/` | PodMonitor and Grafana, for a cluster already running Prometheus |
+| `mint-kubeconfig.sh` | builds a kubeconfig for the CI ServiceAccount |
 
-> **Endereços e nomes de host do cluster ficam fora deste arquivo de propósito.**
-> Atrás da Cloudflare, o IP da origem é o que separa "protegido pela CDN" de
-> "acessível diretamente" — publicá-lo entrega esse atalho a quem ler, e este
-> repositório é público. Um nome de host do cluster vale o mesmo: `dig` devolve o
-> IP em um comando. Os comandos abaixo usam `NODE_IP` e `K3S_SERVER`, vindos do
-> ambiente.
->
-> Número de NodePort **fica**: os manifests já os declaram, então tirá-los daqui
-> seria higiene decorativa. O que não pode estar escrito é para onde apontá-los.
-
-### O proxy da Cloudflare precisa ficar ligado
-
-O Origin Certificate só é confiado pela própria Cloudflare. Com a nuvem cinza
-(DNS only), o browser rejeita o certificado.
-
-**Consequência para as Etapas 9 e 10:** a Cloudflare faz cache e rate limiting
-próprios. Um k6 apontado para `https://oxid.uk` mede a Cloudflare, não o oxid —
-os números de p95, hit rate e saturação seriam dela. O teste de carga tem que ir
-direto no NodePort ou no IP da VPS, contornando o proxy.
-
-## Deploy manual (primeira vez)
+## Applying
 
 ```bash
 kubectl apply -f infra/k8s/00-namespace.yaml
 
-# Secret do banco — nunca em arquivo versionado.
+# The database secret. Never in a versioned file.
 kubectl -n oxid create secret generic oxid-db \
   --from-literal=username=oxid \
   --from-literal=database=oxid \
@@ -67,135 +32,63 @@ kubectl -n oxid rollout status statefulset/postgres
 
 kubectl apply -f infra/k8s/20-redis.yaml
 kubectl apply -f infra/k8s/30-api.yaml
-kubectl -n oxid rollout status deployment/api
-```
-
-Depois cole `traefik-oxid.yaml` no Coolify (Servers → Proxy → Dynamic
-Configurations) com o nome `oxid.yaml`, e recarregue o proxy.
-
-A primeira imagem precisa existir antes do `apply` da API. Ou espere o workflow
-`Deploy` rodar, ou publique à mão:
-
-```bash
-docker build -f infra/Dockerfile -t ghcr.io/josemoura212/oxid:latest .
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u josemoura212 --password-stdin
-docker push ghcr.io/josemoura212/oxid:latest
-```
-
-O pacote precisa ser público no GHCR, ou o cluster vai precisar de um
-`imagePullSecret`.
-
-## Deploy automático
-
-`.github/workflows/deploy.yml` roda a cada push na `main`:
-
-1. Builda `infra/Dockerfile` e publica no GHCR, com tag `sha-<commit>` e `latest`
-2. Roda as migrations como um `Job`, a partir da **mesma imagem**
-3. `kubectl set image` **pelo digest**, não pela tag
-4. Aguarda o rollout e faz um smoke test em `/health`
-
-Deploy por digest e não por `latest` é o que torna o rollback possível: `latest`
-não diz o que está rodando nem para onde voltar.
-
-### Configuração única
-
-```bash
-kubectl apply -f infra/k8s/40-deploy-access.yaml
-./infra/k8s/mint-kubeconfig.sh
-```
-
-O script imprime um kubeconfig em base64. Cole em **Settings → Secrets and
-variables → Actions → New repository secret**, com o nome `KUBECONFIG`.
-
-A credencial é de um ServiceAccount limitado ao namespace `oxid`, não a de
-cluster-admin: ela pode atualizar o Deployment, rodar o Job de migração e ler
-pods. Vazar isso não custa o cluster.
-
-## Migrations
-
-Rodam como `Job`, nunca no boot da aplicação — com 2 réplicas, as duas
-tentariam ao mesmo tempo. O binário é o `oxid-migrate`, que sai da mesma imagem
-da API, então schema e código que o espera são sempre o mesmo build.
-
-Manualmente:
-
-```bash
-kubectl -n oxid delete job oxid-migrate --ignore-not-found
-kubectl -n oxid create job oxid-migrate \
-  --image=ghcr.io/josemoura212/oxid:latest -- /usr/local/bin/oxid-migrate
-kubectl -n oxid logs job/oxid-migrate -f
-```
-
-## Verificação
-
-```bash
-kubectl -n oxid get pods -o wide
-kubectl -n oxid logs -l app=api --tail=50
-
-# NodePort direto, sem Traefik nem Cloudflare
-curl -s "http://$NODE_IP:30091/health"
-
-# Traefik, sem Cloudflare
-curl -sk --resolve "oxid.uk:443:$NODE_IP" https://oxid.uk/health
-
-# Caminho completo
-curl -s https://oxid.uk/health
-```
-
-Testar nessa ordem isola a camada com problema: se o NodePort responde e o
-Traefik não, é proxy; se o Traefik responde e o domínio não, é Cloudflare.
-
-## Pendências
-
-- **Front não está no cluster.** Só a API. O complicador é que `GET /{code}` na
-  raiz colide com os assets estáticos — ou o Traefik separa por path, ou a API
-  serve os estáticos com `ServeDir` (uma origem só, resolve na raiz).
-- **Sem observabilidade.** `/metrics` é a Etapa 7. Já existe um namespace
-  `monitoring` no cluster.
-- **Réplica única do Postgres**, sem standby e sem backup automatizado. O PVC é
-  `local-path`, ou seja, disco do nó.
-- **Sem NetworkPolicy.** Qualquer pod do cluster alcança o Postgres do oxid.
-- **Rate limit e `X-Forwarded-For`.** Com Cloudflare + Traefik, o header chega
-  com uma cadeia de IPs. Vale conferir que o primeiro é mesmo o do cliente, ou o
-  limite passa a valer por proxy.
-
-## Estado atual (2026-07-26)
-
-Tudo no ar em `https://oxid.uk`:
-
-| Serviço | NodePort | Imagem |
-|---|---|---|
-| api | 30091 | `ghcr.io/josemoura212/oxid` |
-| web | 30092 | `ghcr.io/josemoura212/oxid-web` |
-| postgres | — | `postgres:18-alpine` |
-| redis | — | `redis:8-alpine` |
-
-Deploy automático a cada push na `main`. As duas imagens são construídas em
-paralelo num runner **arm64 nativo** (`ubuntu-24.04-arm`) — o nó é Oracle Ampere,
-e emular com QEMU custava 2-3x o tempo.
-
-### O que só precisa ser feito uma vez
-
-Já está feito, mas fica registrado para recriar o ambiente:
-
-```bash
-kubectl apply -f infra/k8s/00-namespace.yaml
-kubectl apply -f infra/k8s/40-deploy-access.yaml
-./infra/k8s/mint-kubeconfig.sh          # → secret KUBECONFIG no GitHub
-
-kubectl -n oxid create secret generic oxid-db \
-  --from-literal=username=oxid --from-literal=database=oxid \
-  --from-literal=password="$(openssl rand -hex 24)"
-
-kubectl apply -f infra/k8s/10-postgres.yaml
-kubectl apply -f infra/k8s/20-redis.yaml
-kubectl apply -f infra/k8s/30-api.yaml
 kubectl apply -f infra/k8s/60-web.yaml
 ```
 
-Os pacotes no GHCR nascem privados — marcar `oxid` e `oxid-web` como públicos, ou
-o cluster não consegue baixar.
+The image has to exist before the API is applied. Either let the `Deploy`
+workflow publish it, or push one by hand from `infra/Dockerfile`.
 
-O workflow usa `kubectl set image`, que troca **só a imagem**. Mudou qualquer
-outra coisa no manifest (probe, recursos, securityContext), precisa de
-`kubectl apply` manual.
+## What you will want to change
+
+- **`APP_APPLICATION__BASE_URL`** in `30-api.yaml` — the shortener puts this in
+  every response it generates, so a wrong value ships broken links.
+- **`nodePort`** on the API and front end Services. They are `NodePort` because
+  the proxy in this setup lives outside the cluster; with an ingress controller
+  inside it, `ClusterIP` plus an Ingress is the better shape.
+- **Storage class** on the Postgres PVC. It relies on the cluster default.
+- **`replicas`** on the API. Two by default, and worth reading `ROADMAP.md`
+  stage 8 before assuming that means twice the throughput — on a single node it
+  does not.
+
+## Migrations run as a Job, never at boot
+
+With more than one replica, every pod would race to migrate the same schema. The
+Job runs `oxid-migrate` from the **same image** as the API, so the schema and the
+code expecting it are always the same build.
+
+```bash
+kubectl -n oxid delete job oxid-migrate --ignore-not-found
+sed "s|IMAGE_REF|ghcr.io/your/image:tag|" infra/k8s/50-migrate-job.yaml \
+  | kubectl apply -f -
+kubectl -n oxid logs job/oxid-migrate -f
+```
+
+## Metrics are on a private port
+
+`/metrics` is not a route on the public router. It answers on a separate listener
+declared in the Deployment and **absent from the Service**, so nothing outside
+the cluster can reach it. Publishing request volume, latency distribution and
+cache behaviour to anyone who asks is a bigger giveaway than it looks.
+
+That is also why `monitoring/10-podmonitor.yaml` is a `PodMonitor` and not a
+`ServiceMonitor`: a ServiceMonitor would need a second Service carrying the
+metrics port, which would create the path this deliberately avoids.
+
+## What is not here, on purpose
+
+Proxy routes, hostnames, TLS wiring, node tuning and capacity measurements. Every
+deployment differs exactly there, and someone else's wiring is noise rather than a
+starting point — it looks authoritative while describing a machine you do not
+have.
+
+If you run the proxy outside the cluster, you need one route per Service pointing
+at the NodePort. If you run an ingress controller inside it, you want Ingress
+objects and no NodePort at all. Neither is more correct; they are different
+environments.
+
+## Deploys change the image, not the manifest
+
+`.github/workflows/deploy.yml` uses `kubectl set image` **by digest**, which
+touches only the container image — a tag cannot tell you what is running nor what
+to roll back to. Change anything else here (probes, resources, securityContext)
+and it takes a manual `kubectl apply`; the workflow will not pick it up.

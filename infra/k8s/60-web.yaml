@@ -67,8 +67,8 @@ metadata:
   name: web
   namespace: oxid
 spec:
-  # NodePort like the API: Traefik lives outside the cluster and reaches the node
-  # through host.docker.internal. 30091 is the API, so this one takes 30092.
+  # NodePort like the API, for the same reason: the proxy lives outside the
+  # cluster. Pick a port that does not collide with the API's.
   type: NodePort
   selector:
     app: web

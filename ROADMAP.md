@@ -208,9 +208,14 @@ ou seja, na Etapa 9, quando o custo de descobrir é bem maior.
 - [x] Prometheus + Grafana em `infra/docker-compose.observability.yml`
 - [x] Dashboard provisionado por arquivo: p50/p95/p99 por rota, req/s por status, hit rate,
       lookups por desfecho, conexões do pool
-- [ ] Exporters de Postgres, Redis e Nginx — entram junto com a Etapa 8, quando o Nginx
-      existir
-- [ ] Prometheus no cluster raspando os pods (hoje só o compose local)
+- [x] Prometheus no cluster raspando os pods, por `PodMonitor` — as duas réplicas com
+      `up=1`, e o Grafana do cluster lendo daí, não só o compose local
+- [ ] Exporters de Postgres e Redis. Os dois são caixa-preta hoje, e a Etapa 10 vai
+      precisar decidir entre "o banco está lento" e "o pool está cheio" — perguntas
+      diferentes que a métrica da aplicação não separa
+- [ ] Métricas do **proxy**, no lugar do exporter de Nginx que esta etapa previa. Não
+      há Nginx balanceador (ver Etapa 8); quem está no caminho de todo tráfego é o
+      Traefik, e ele expõe Prometheus nativamente
 
 🎯 Dá para responder "onde está o gargalo?" olhando um único dashboard.
 🦀 Macros de métricas, custo de instrumentar, cardinalidade de labels.
@@ -235,14 +240,64 @@ nunca estão mais velhos que o próprio scrape, e não há um segundo relógio p
 `total - idle` é o número que importa; grudado em `max_connections` significa fila no pool,
 não no banco.
 
-## Etapa 8 — Topologia completa
+## Etapa 8 — O teto do nó único
 
-- [ ] 2 instâncias da app atrás de Nginx (docker-compose primeiro; VMs depois, se houver homelab)
-- [ ] Nginx: upstream com keepalive, `keepalive_requests` alto, worker_processes = cores
-- [ ] Sysctls documentados em `infra/`: `tcp_tw_reuse`, faixa de portas efêmeras, `somaxconn`
-- [ ] Build de produção: `cargo build --release`, binário em imagem slim (multi-stage)
+Reescrita em 2026-07-28. A versão original foi escrita antes do k3s existir, e metade
+dela aconteceu por outro caminho: "2 instâncias atrás de Nginx" hoje são 2 pods atrás
+de um Service, quem balanceia é o kube-proxy, e o Nginx do projeto serve só os
+estáticos do front — não há `upstream` nem `proxy_pass` em `infra/nginx/web.conf`. O
+build multi-stage em `--release` já está no `infra/Dockerfile` desde o primeiro deploy.
 
-🎯 Tráfego balanceado 50/50 nas duas instâncias, verificado nas métricas.
+O que sobrou de real virou o tema: **conhecer o teto do que já existe e deixar a
+medição da Etapa 9 acontecer sem ruído.**
+
+- [ ] Sysctls e limites de file descriptor — `tcp_tw_reuse`, faixa de portas efêmeras,
+      `somaxconn`, `nofile`. O item que sobreviveu inteiro, com uma pergunta nova:
+      **em qual das três camadas cada um vale**. Host, container do proxy e pod são
+      namespaces diferentes, e ajustar no lugar errado não faz nada e parece que fez
+- [ ] A conta do pool: réplicas × `max_connections` contra o que o banco sustenta.
+      Documentar a conta aqui; o número final sai da medição da Etapa 10, não de chute
+- [ ] `requests` e `limits` de CPU e memória revisados. Sob saturação, quem não
+      reservou é o primeiro a ser estrangulado — e a API hoje reserva `cpu: 100m`
+- [ ] Registrar quanto do nó é do oxid e quanto é de vizinho, com número
+- [ ] Decidir 1 ou 2 réplicas com o critério escrito por extenso, seja qual for a
+      decisão. Sem isso vira cargo cult na próxima vez que alguém olhar
+
+🎯 O teto de requisições por segundo do nó é conhecido e a camada que satura primeiro
+   está identificada — com número medido, não com suposição.
+
+**Duas réplicas no mesmo nó não somam throughput.** O Tokio de um único pod já enxerga
+os dois cores e os usa; dois pods são dois runtimes disputando os mesmos dois cores.
+O que elas dão é **continuidade durante crash** — um panic não derruba o serviço. E
+note que rolling update não é argumento: com `maxUnavailable: 0` e `maxSurge: 1`, uma
+réplica única também sobe a nova antes de matar a velha.
+
+**O custo das duas réplicas está no pool, não na memória.** Cada pod consome ~1 MiB em
+repouso, o que é irrelevante. Mas `max_connections: 8` no `base.yaml` vezes 2 réplicas
+são 16 conexões contra um Postgres que divide 2 vCPU com todo o resto do host — quatro
+vezes o que a regra "cores do banco × 2" recomendaria. Conexões ociosas não custam;
+conexões *ativas* além do que o banco consegue executar em paralelo não viram
+throughput, viram troca de contexto.
+
+**O critério 50/50 foi descartado, e não só por causa do kube-proxy.** É verdade que
+ele sorteia por conexão e não por requisição, então com keep-alive uma conexão sorteada
+carrega centenas de requisições atrás dela e o desvio se amplifica — foi o que a
+medição de tráfego real mostrou, em 60/40. Mas o problema mais fundo é outro:
+**simetria entre dois processos na mesma CPU não significa nada.** Não há isolamento de
+falha de máquina, não há soma de capacidade, não há nada que o 50/50 garanta. Perseguir
+esse número seria otimizar uma métrica sem consequência.
+
+**O nó não é do oxid.** Os mesmos 2 vCPU servem cerca de vinte containers de outros
+projetos, além do proxy, do Prometheus e do Grafana. A meta da Etapa 9 — 11.574
+leituras/s — são ~5.800 req/s por core, num core compartilhado. Isso não invalida a
+medição, mas muda o que ela significa: o teto que vai aparecer é o teto **deste** nó
+como ele está, e é preciso saber quanto dele é vizinho antes de atribuir o gargalo ao
+código.
+
+**O observador entra na conta do observado.** O Prometheus é hoje o maior consumidor de
+CPU do cluster inteiro — mais que todo o oxid somado. Sob carga ele raspa séries mais
+caras e consome mais, exatamente quando a CPU é o recurso disputado. Vale medir o custo
+dele durante o teste, não só depois.
 
 ## Etapa 9 — Teste de carga com k6
 
@@ -261,8 +316,9 @@ não no banco.
 - [ ] Método fixo: hipótese → medição → mudança (UMA por vez) → confirmação
 - [ ] Registrar cada iteração em `docs/DECISOES.md` (o que media, o que mudou, resultado)
 - [ ] Subir escala: 0.5 → 0.75 → 1.0 (≈ 11.574 leituras/s + 1.157 escritas/s)
-- [ ] Suspeitos prováveis, nesta ordem: Nginx/kernel (portas, sockets), pool do Postgres,
-      serialização no hot path, límites de file descriptors
+- [ ] Suspeitos prováveis, nesta ordem: kernel do host (portas efêmeras, `conntrack`,
+      sockets), pool do Postgres, contenção de CPU com os vizinhos do nó, serialização
+      no hot path, limites de file descriptors
 
 🎯 Escala 1.0 sustentada com zero erros e p95 de leitura < 50ms.
 

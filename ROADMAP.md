@@ -481,36 +481,68 @@ funcionaria, e mesmo se funcionasse deixaria de fora justamente o clippy e o LCO
 é a afirmação mais rígida sobre este código — clippy com `pedantic` em deny. Se o Sonar
 reportasse critério próprio, passariam a existir dois padrões em desacordo.
 
-## Pendência de segurança — NodePorts abertos na internet
+## Pendência de infra — superfície de rede do nó
 
-Descoberto em 2026-07-27, ao publicar o Grafana. Os três NodePorts respondem
-direto no IP do nó:
+Revisada em 2026-07-27, ao publicar o Grafana e notar que os serviços do cluster
+respondem direto no nó, por fora do proxy: sem TLS, sem os headers de segurança e
+sem o rate limit da CDN. Num painel com formulário de login isso é pior — a senha
+viaja em claro.
 
-```
-http://168.75.92.187:30091/health     → 200   (API)
-http://168.75.92.187:30092/healthz    → 200   (front)
-http://168.75.92.187:30093/api/health → 200   (Grafana)
-```
+Reduzir o que o nó aceita de fora ao mínimo, de modo que todo tráfego entre pelo
+caminho pretendido em vez de por atalhos.
 
-Quem usa esse caminho **contorna Cloudflare e Traefik**: sem TLS, sem os headers
-de segurança, sem WAF e sem o rate limit da CDN. No Grafana é pior — significa
-formulário de login trafegando em HTTP puro.
+- [x] Revisar as regras de entrada na **Security List da Oracle**, não no
+      `iptables` local: o k3s reescreve regras de iptables e a alteração some num
+      restart. O proxy roda no mesmo host e alcança os serviços por dentro, então
+      fechar a porta de fora não quebra o caminho normal
+- [x] Remover a **faixa** de portas de serviço. Enquanto era faixa, todo Service
+      novo nascia público sem ninguém decidir isso — e nenhum deles precisava
+      dela, porque o proxy chega por dentro
+- [ ] Restringir a entrada HTTP/HTTPS aos **ranges da Cloudflare**
+      (`cloudflare.com/ips`), para que a origem só aceite tráfego vindo da CDN.
+      Hoje alcançar a origem por IP com o `Host` certo pula a CDN inteira.
+      Todo hostname roteado já está atrás do proxy, inclusive para o desafio ACME,
+      então a restrição não tira caminho de ninguém
+- [ ] Restringir o **plano de controle do cluster** a origens conhecidas. É a
+      porta que entrega o cluster, não uma aplicação — e a única cuja exposição
+      não é compensada por nada mais na pilha. Presa ao modelo de deploy: hoje o
+      CI empurra de fora, e restringir por origem exigiria runner próprio ou
+      inverter para o cluster puxar
+- [ ] Fechar as portas dos **painéis de administração**, que respondem por porta
+      própria contornando o proxy — sendo que o mesmo painel já é servido por
+      domínio, com TLS e os headers. A porta direta é só a versão sem nenhum deles
 
-O que **não** está exposto: a porta 9090 das métricas não responde de fora
-(timeout confirmado). O listener separado fez o trabalho dele.
+**Metade das regras não tinha processo do outro lado.** O levantamento cruzou o
+que a Security List abria com o que de fato escutava no host: regras de um serviço
+já desinstalado e de aplicações que só publicam dentro da rede do Docker. Uma
+regra órfã não é inócua — é uma porta esperando alguém subir algo naquele número.
 
-- [ ] Fechar 30091-30093 na **Security List da Oracle**, não no `iptables` local:
-      o k3s reescreve regras de iptables e a alteração some num restart. O Traefik
-      roda no mesmo host e alcança por `host.docker.internal`, então nada quebra
-- [ ] Restringir 80/443 aos **ranges da Cloudflare** (`cloudflare.com/ips`). Hoje
-      qualquer um alcança a origem por IP com `Host: oxid.uk` e pula a CDN inteira
+**A Security List é a única camada, e isso muda o peso de cada regra.** Vários
+serviços do host escutam em `0.0.0.0` (kubelet, exporter de nó, o proxy de um
+banco) e estão fora da internet só porque nenhuma regra os alcança. Não há
+firewall de host segurando nada, pelo motivo já dito: o k3s reescreve o iptables.
+Cada regra aberta é a exposição inteira, sem segunda linha.
+
+O que **não** está exposto, e vale registrar: a porta das métricas não responde de
+fora (timeout confirmado). O listener separado da Etapa 7 fez o trabalho dele.
+
+**Endereços não vão neste arquivo.** O repositório é público, e escrever aqui qual
+porta responde em qual endereço economiza reconhecimento para quem procurar. Os
+números concretos vivem na Security List e nos manifests; este bloco registra a
+decisão, não o alvo.
 
 **Cloudflare Tunnel — depois da Etapa 10, não antes.** Ele é melhor: zero portas
-de entrada, IP de origem nunca exposto. Mas fecha o caminho que as Etapas 9 e 10
-precisam — o k6 tem que bater **direto no NodePort**, justamente porque medir
-através da Cloudflare mediria a CDN. Com tudo fechado, o gerador de carga teria
-que rodar dentro da VPS, disputando CPU com o alvo. É o erro que o estudo
-original cometeu e que este projeto existe para não repetir.
+de entrada e IP de origem nunca exposto. Mas fecha o caminho que as Etapas 9 e 10
+precisam, porque o k6 tem que medir a origem sem a CDN no meio — medir através
+dela mediria a CDN. Com tudo fechado, o gerador de carga teria que rodar dentro
+da VPS, disputando CPU com o alvo. É o erro que o estudo original cometeu e que
+este projeto existe para não repetir.
+
+**O que a redação não resolve.** Tirar endereços daqui impede reintroduzi-los e
+para de apontar o alvo, mas não recupera o que já esteve num repositório público
+nem o que o DNS entrega de graça. O controle é a regra de firewall; a redação é
+higiene. Enquanto os itens acima não fecharem, o endereço deve ser tratado como
+conhecido.
 
 ## Pendência de CI — quem segura um deploy não revisado
 

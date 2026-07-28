@@ -1,4 +1,4 @@
-# Deploy no k3s (mangatrix)
+# Deploy no k3s
 
 Notas de deploy do oxid. Este diretório fica fora do git (`docs/` está no
 `~/.gitignore_global`).
@@ -25,13 +25,21 @@ Service é `NodePort` e não `Ingress`: ele alcança o nó por
 
 | | |
 |---|---|
-| k3s | v1.34.5, nó único `mangatrix` |
-| IP público | 168.75.92.187 |
-| API server | `https://k3s.mangatrix.net:6443` (acessível da internet) |
+| k3s | v1.34.5, nó único |
 | StorageClass | `local-path` (default, `WaitForFirstConsumer`) |
 | NodePort do oxid | 30091 |
-| DNS | `oxid.uk` e `*.oxid.uk` → 168.75.92.187, **com proxy** |
+| DNS | `oxid.uk` e `*.oxid.uk` → nó, **com proxy** |
 | TLS | Cloudflare Origin Certificate, em `cert.yaml` do Coolify |
+
+> **Endereços e nomes de host do cluster ficam fora deste arquivo de propósito.**
+> Atrás da Cloudflare, o IP da origem é o que separa "protegido pela CDN" de
+> "acessível diretamente" — publicá-lo entrega esse atalho a quem ler, e este
+> repositório é público. Um nome de host do cluster vale o mesmo: `dig` devolve o
+> IP em um comando. Os comandos abaixo usam `NODE_IP` e `K3S_SERVER`, vindos do
+> ambiente.
+>
+> Número de NodePort **fica**: os manifests já os declaram, então tirá-los daqui
+> seria higiene decorativa. O que não pode estar escrito é para onde apontá-los.
 
 ### O proxy da Cloudflare precisa ficar ligado
 
@@ -125,10 +133,10 @@ kubectl -n oxid get pods -o wide
 kubectl -n oxid logs -l app=api --tail=50
 
 # NodePort direto, sem Traefik nem Cloudflare
-curl -s http://10.0.0.43:30091/health
+curl -s "http://$NODE_IP:30091/health"
 
 # Traefik, sem Cloudflare
-curl -sk --resolve oxid.uk:443:168.75.92.187 https://oxid.uk/health
+curl -sk --resolve "oxid.uk:443:$NODE_IP" https://oxid.uk/health
 
 # Caminho completo
 curl -s https://oxid.uk/health

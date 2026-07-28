@@ -491,20 +491,37 @@ viaja em claro.
 Reduzir o que o nó aceita de fora ao mínimo, de modo que todo tráfego entre pelo
 caminho pretendido em vez de por atalhos.
 
-- [ ] Revisar as regras de entrada na **Security List da Oracle**, não no
+- [x] Revisar as regras de entrada na **Security List da Oracle**, não no
       `iptables` local: o k3s reescreve regras de iptables e a alteração some num
       restart. O proxy roda no mesmo host e alcança os serviços por dentro, então
       fechar a porta de fora não quebra o caminho normal
+- [x] Remover a **faixa** de portas de serviço. Enquanto era faixa, todo Service
+      novo nascia público sem ninguém decidir isso — e nenhum deles precisava
+      dela, porque o proxy chega por dentro
 - [ ] Restringir a entrada HTTP/HTTPS aos **ranges da Cloudflare**
       (`cloudflare.com/ips`), para que a origem só aceite tráfego vindo da CDN.
-      Hoje alcançar a origem por IP com `Host: oxid.uk` pula a CDN inteira
+      Hoje alcançar a origem por IP com o `Host` certo pula a CDN inteira.
+      Todo hostname roteado já está atrás do proxy, inclusive para o desafio ACME,
+      então a restrição não tira caminho de ninguém
 - [ ] Restringir o **plano de controle do cluster** a origens conhecidas. É a
       porta que entrega o cluster, não uma aplicação — e a única cuja exposição
-      não é compensada por nada mais na pilha
-- [ ] Trocar a **faixa** de portas de serviço aberta por regra porta a porta.
-      Enquanto for faixa, todo Service novo nasce público sem ninguém decidir isso
-- [ ] Fechar ou restringir os painéis de administração que hoje respondem por
-      porta própria, contornando o proxy
+      não é compensada por nada mais na pilha. Presa ao modelo de deploy: hoje o
+      CI empurra de fora, e restringir por origem exigiria runner próprio ou
+      inverter para o cluster puxar
+- [ ] Fechar as portas dos **painéis de administração**, que respondem por porta
+      própria contornando o proxy — sendo que o mesmo painel já é servido por
+      domínio, com TLS e os headers. A porta direta é só a versão sem nenhum deles
+
+**Metade das regras não tinha processo do outro lado.** O levantamento cruzou o
+que a Security List abria com o que de fato escutava no host: regras de um serviço
+já desinstalado e de aplicações que só publicam dentro da rede do Docker. Uma
+regra órfã não é inócua — é uma porta esperando alguém subir algo naquele número.
+
+**A Security List é a única camada, e isso muda o peso de cada regra.** Vários
+serviços do host escutam em `0.0.0.0` (kubelet, exporter de nó, o proxy de um
+banco) e estão fora da internet só porque nenhuma regra os alcança. Não há
+firewall de host segurando nada, pelo motivo já dito: o k3s reescreve o iptables.
+Cada regra aberta é a exposição inteira, sem segunda linha.
 
 O que **não** está exposto, e vale registrar: a porta das métricas não responde de
 fora (timeout confirmado). O listener separado da Etapa 7 fez o trabalho dele.

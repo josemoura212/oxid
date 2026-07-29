@@ -136,6 +136,29 @@ pub struct Strings {
     pub remove_prefix: &'static str,
     pub language_group: &'static str,
     pub repository: &'static str,
+
+    // Accounts.
+    pub sign_in: &'static str,
+    pub sign_out: &'static str,
+    pub sign_out_all: &'static str,
+    pub sign_up: &'static str,
+    pub email_label: &'static str,
+    pub password_label: &'static str,
+    pub password_hint: &'static str,
+    pub password_confirm_label: &'static str,
+    pub password_mismatch: &'static str,
+    pub have_account: &'static str,
+    pub no_account: &'static str,
+    pub close: &'static str,
+    pub working: &'static str,
+    pub account_dialog: &'static str,
+    pub vault_account_title: &'static str,
+    pub vault_account_empty: &'static str,
+    /// The sentence that keeps the import from looking like a bug. The codes
+    /// created are new, so the list changes addresses after signing up, and
+    /// saying so is cheaper than answering the question later.
+    pub import_note: &'static str,
+    pub load_more: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -159,6 +182,25 @@ static EN: Strings = Strings {
     remove_prefix: "Remove from this list:",
     language_group: "Language",
     repository: "Source code on GitHub",
+
+    sign_in: "Sign in",
+    sign_out: "Sign out",
+    sign_out_all: "Sign out of all devices",
+    sign_up: "Create account",
+    email_label: "Email",
+    password_label: "Password",
+    password_hint: "At least 12 characters. Length is the only rule.",
+    password_confirm_label: "Confirm password",
+    password_mismatch: "The two passwords do not match.",
+    have_account: "Already have an account?",
+    no_account: "No account yet?",
+    close: "Close",
+    working: "Working",
+    account_dialog: "Account",
+    vault_account_title: "In your account",
+    vault_account_empty: "No links in this account yet.",
+    import_note: "Links saved in this browser were added to your account with new codes. The old links still work.",
+    load_more: "Load more",
 };
 
 static PT_BR: Strings = Strings {
@@ -182,6 +224,25 @@ static PT_BR: Strings = Strings {
     remove_prefix: "Remover desta lista:",
     language_group: "Idioma",
     repository: "Código-fonte no GitHub",
+
+    sign_in: "Entrar",
+    sign_out: "Sair",
+    sign_out_all: "Sair de todos os dispositivos",
+    sign_up: "Criar conta",
+    email_label: "E-mail",
+    password_label: "Senha",
+    password_hint: "No mínimo 12 caracteres. Tamanho é a única regra.",
+    password_confirm_label: "Confirmar senha",
+    password_mismatch: "As duas senhas não coincidem.",
+    have_account: "Já tem conta?",
+    no_account: "Ainda não tem conta?",
+    close: "Fechar",
+    working: "Enviando",
+    account_dialog: "Conta",
+    vault_account_title: "Na sua conta",
+    vault_account_empty: "Nenhum link nesta conta ainda.",
+    import_note: "Os links salvos neste navegador entraram na sua conta com códigos novos. Os antigos continuam funcionando.",
+    load_more: "Carregar mais",
 };
 
 #[cfg(test)]

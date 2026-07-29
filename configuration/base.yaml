@@ -38,3 +38,19 @@ rate_limit:
   # traffic the system exists to serve.
   shorten_per_second: 5
   shorten_burst: 20
+  # Much tighter than writing, because the cost is CPU rather than a row: every
+  # attempt spends an Argon2 verification, including the ones for e-mails that
+  # do not exist. Two per second still allows a person who mistypes.
+  login_per_second: 2
+  login_burst: 5
+  # Independent of who is calling, unlike the limits above. Argon2 blocks a
+  # thread while it runs, so this is what keeps a login flood from taking the
+  # redirect path down with it.
+  hash_concurrency: 1
+  hash_wait_ms: 1000
+
+session:
+  # Seven days. Long enough not to annoy, short enough that a cookie captured
+  # and forgotten does not stay useful indefinitely. Fixed rather than sliding —
+  # see `SessionSettings`.
+  ttl_seconds: 604800

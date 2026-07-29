@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use oxid_shared::ShortenResponse;
 
 use crate::{
+    account::{Account, AccountButton, AccountDialog, AccountVault},
     api,
     i18n::Locale,
     storage::{self, SavedLink},
@@ -20,10 +21,35 @@ pub fn App() -> impl IntoView {
     // stored at failure time would stay in whatever locale was active then.
     let storage_failed = RwSignal::new(false);
 
+    let account = Account::new();
+    let dialog_open = RwSignal::new(false);
+
     // The served HTML is always `lang="en"` — it is a static file. Screen
     // readers pick pronunciation from this attribute, so it has to be corrected
     // once the app knows better.
     Effect::new(move |_| apply_to_document(locale.get()));
+
+    // Asks once, on mount, whether there is a session. Cheap enough not to
+    // matter and the only way to render the right button on first paint —
+    // guessing "signed out" would make it flicker for whoever is signed in.
+    Effect::new(move |_| {
+        leptos::task::spawn_local(async move {
+            match api::session().await {
+                Ok(user) => {
+                    account.user.set(Some(user));
+                    if user.is_some() {
+                        account.reload().await;
+                    }
+                }
+                // Treated as anonymous: the endpoint being unreachable is not a
+                // reason to block a page whose main feature needs no account.
+                Err(error) => {
+                    leptos::logging::warn!("could not read the session: {error}");
+                    account.user.set(Some(None));
+                }
+            }
+        });
+    });
 
     view! {
         <header class="topbar">
@@ -41,6 +67,7 @@ pub fn App() -> impl IntoView {
                     >
                         <GithubMark />
                     </a>
+                    <AccountButton account=account locale=locale.into() open=dialog_open />
                 </nav>
             </div>
         </header>
@@ -48,8 +75,31 @@ pub fn App() -> impl IntoView {
         <div class="shell">
             <Shortener links=links storage_failed=storage_failed locale=locale.into() />
 
-            <Vault links=links storage_failed=storage_failed locale=locale.into() />
+            // One list at a time. Showing both would leave the same URL on
+            // screen twice under different codes, which is accurate and
+            // useless — the browser list stays intact underneath either way.
+            <Show
+                when=move || account.signed_in()
+                fallback=move || {
+                    view! {
+                        <Vault
+                            links=links
+                            storage_failed=storage_failed
+                            locale=locale.into()
+                        />
+                    }
+                }
+            >
+                <AccountVault account=account locale=locale.into() />
+            </Show>
         </div>
+
+        <AccountDialog
+            account=account
+            locale=locale.into()
+            open=dialog_open
+            saved=links
+        />
     }
 }
 
@@ -414,7 +464,7 @@ fn copy_to_clipboard(text: &str) {
 
 /// The scheme is noise in a list where every row is a URL. Keeping the rest
 /// intact matters: two links to the same host differ only after it.
-fn strip_scheme(url: &str) -> &str {
+pub(crate) fn strip_scheme(url: &str) -> &str {
     url.strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
         .unwrap_or(url)

@@ -452,3 +452,116 @@ body {
   }
 }
 
+
+/* Account dialog.
+ *
+ * Not a <dialog>: the native element brings its own top-layer, backdrop and
+ * focus behaviour, which is genuinely better — but it also needs showModal()
+ * from Rust, meaning another web-sys feature and an element reference threaded
+ * through the component. Two divs and aria-modal say the same thing to a screen
+ * reader for now, and the swap is contained if it ever earns its keep.
+ */
+.dialog-veil {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 60%);
+  z-index: 10;
+}
+
+.dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 11;
+  width: min(26rem, calc(100vw - 2rem));
+  transform: translate(-50%, -50%);
+  padding: 1.75rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.75rem;
+  background: var(--page);
+  box-shadow: 0 1.5rem 3rem rgb(0 0 0 / 45%);
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.field-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.field-input {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.field-input:focus-visible {
+  outline: 2px solid var(--accent-face);
+  outline-offset: 1px;
+}
+
+.field-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.dialog-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--accent-text);
+}
+
+.dialog-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dialog-switch {
+  padding: 0.35rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.dialog-switch:hover {
+  color: var(--fg);
+}
+
+/* 44px, same as the composer button: a close affordance that only works with a
+   mouse is the one people on phones need most. */
+.dialog-close {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dialog-close:hover {
+  color: var(--fg);
+}

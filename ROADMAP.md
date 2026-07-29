@@ -427,32 +427,114 @@ o par mediana/p95 antes de formular qualquer hipótese economiza uma iteração 
 Depois da Etapa 10, de propósito: autenticação não muda o perfil de carga do sistema,
 e as Etapas 9-10 medem melhor um sistema sem sessão no caminho.
 
-- [ ] Migration `users` (id, email `citext` unique, `password_hash`, created_at)
-- [ ] Migration `url_owners` (user_id, url_id, created_at) — PK composta, índice
-      `(user_id, created_at DESC)` para a listagem
-- [ ] Hash argon2id; verificação sempre em tempo constante, inclusive para e-mail
+- [x] Migration `users` (id, email `citext` unique, `password_hash`, created_at)
+- [x] Migration `short_codes` — **substitui `url_owners`**, ver a decisão revista abaixo
+- [x] Hash argon2id; verificação sempre em tempo constante, inclusive para e-mail
       inexistente (hash falso), senão o tempo de resposta vira oráculo de cadastro
-- [ ] Sessão no Redis, cookie `HttpOnly` + `Secure` + `SameSite=Lax`, id de 128 bits
-- [ ] `POST /v1/signup`, `POST /v1/login`, `POST /v1/logout`, `GET /v1/me`
-- [ ] `GET /v1/urls` — lista do dono, paginada por keyset (não OFFSET)
-- [ ] `POST /v1/shorten` associa ao dono quando há sessão; sem sessão segue igual
-- [ ] Rate limit no login, separado do de `shorten`
+- [x] Sessão no Redis, cookie `HttpOnly` + `Secure` + `SameSite=Lax`, id de 128 bits
+- [x] `POST /v1/signup`, `POST /v1/login`, `POST /v1/logout`, `GET /v1/me`
+- [x] `GET /v1/urls` — lista do dono, paginada por keyset (não OFFSET)
+- [x] `POST /v1/shorten` associa ao dono quando há sessão; sem sessão segue igual
+- [x] Rate limit próprio nas rotas caras, separado do de `shorten`
+- [x] **Extra:** hashagem fora do runtime e sob teto de concorrência — ver abaixo
+- [x] **Extra:** front com diálogo de conta, lista da conta e importação no cadastro
+- [x] **Extra:** `POST /v1/logout-all` — "sair de todos os dispositivos", ver abaixo
+- [x] **Extra:** testes de CORS/CSRF travando a proteção emergente, ver abaixo
+- [ ] Fechar a enumeração de contas no `signup` — precisa de e-mail, ver abaixo
 
-🎯 Duas contas encurtando a MESMA URL longa recebem o MESMO código, e cada uma
-   a vê só na sua lista — a idempotência global sobrevive ao ownership.
-🦀 Middleware/extractor de auth no Axum, `argon2`, cookies assinados, keyset pagination.
+🎯 ✅ Duas contas encurtando a mesma URL recebem **códigos diferentes** apontando para a
+   **mesma linha** em `urls`; a mesma conta encurtando duas vezes recebe o mesmo código;
+   e o código anônimo criado antes continua resolvendo, inalterado.
+🦀 Extractor de auth no Axum, `argon2`, cookies, keyset pagination, `spawn_blocking`.
 
-**Decisão (2026-07-26): ownership é N:N, a idempotência global fica intacta.**
-`urls.url_hash` continua `UNIQUE` global. A alternativa — `UNIQUE (user_id, url_hash)`,
-código próprio por usuário — daria métrica isolada por dono, mas multiplicaria linhas
-num modelo que projeta 365 bilhões delas contando com o dedupe.
+**Decisão revista (2026-07-29): o código é por dono, a URL continua deduplicada.**
+O ADR de 26/07 escolhia `url_owners` N:N com código global, e rejeitava o código por
+usuário porque `UNIQUE (user_id, url_hash)` multiplicaria linhas num modelo que projeta
+365 bilhões delas contando com o dedupe. A rejeição estava certa; a conclusão, não.
+
+O problema é que `urls` fazia dois trabalhos com regras de unicidade diferentes: guardar
+a URL longa e definir o código. Separando em `short_codes (id, url_id, owner_id)`, a URL
+longa continua armazenada uma vez — o dedupe do dado **pesado** sobrevive — e o que
+multiplica é uma linha de três bigints por (dono, URL).
+
+O que isso resolve, e é o motivo de valer uma migration:
+
+- **Cliques atribuíveis.** Um clique chega como `GET /{code}` e o código é a única
+  informação disponível. Com código compartilhado, um clique pertence a todos os donos ao
+  mesmo tempo e nada no request permite escolher. Com código por dono, a atribuição é
+  estrutural — sem tabela de rateio e sem regra a documentar.
+- **O 302 deixa de contaminar o link anônimo.** A Etapa 12 registrava como dano aceito
+  que "um dono faz o código inteiro virar 302, inclusive para quem chegou pelo link
+  anônimo". Agora o código sem dono continua 301 e cacheável, que é o caminho que as
+  Etapas 9-10 medem.
+- **O flag `owned` no cache deixa de existir** — com monotonicidade e instante de
+  invalidação, três parágrafos de complexidade. O código já nasce sabendo se tem dono, e
+  o cache volta a ser imutável sem ressalva.
+
+O que se perde é "duas pessoas diferentes recebem o mesmo código", que não servia a
+ninguém. A idempotência com valor prático — a mesma pessoa encurtando duas vezes — fica.
+
+**`UNIQUE NULLS NOT DISTINCT` é a linha que sustenta isso.** Uma `UNIQUE` comum trata
+`NULL` como nunca igual a `NULL`, então permitiria dois códigos anônimos para a mesma
+URL — quebrando em silêncio a idempotência que já funcionava. Nada erra, duplicatas só
+acumulam. Tem teste próprio, porque é o tipo de falha que passa em todos os outros.
+
+**Argon2 bloqueia, e isso era pior que o rate limit furado.** A verificação é síncrona e
+CPU-bound: chamada direto de um handler `async`, ocupa um worker do Tokio por dezenas de
+milissegundos. Num nó de dois cores há dois workers, então duas tentativas simultâneas
+paravam o runtime inteiro — redirect incluído. Um atacante não precisava saturar CPU,
+precisava de duas conexões. Resolvido com `spawn_blocking`.
+
+**E um teto de concorrência que não depende de identificar ninguém.** O limite por IP
+protege os endpoints caros, mas já falhou em silêncio atrás da CDN uma vez. Um semáforo
+em volta da hashagem limita o Argon2 em voo independentemente de quem chama: uma enxurrada
+vira fila, e além do teto a resposta é 503 com `Retry-After`. O caminho do decoy também
+consome slot — isentá-lo daria a volta no teto usando só e-mails inexistentes, que é o
+caminho mais barato de descobrir.
+
+**"Sair de todos os dispositivos" (2026-07-29), a partir da auditoria.** O `SessionStore`
+só tinha `s:<id> → user_id` — busca em um sentido só, sem como listar as sessões de um
+usuário. Isso tornava impossível revogar tudo num incidente de conta comprometida. A
+correção é um índice reverso: ao criar uma sessão, ela também entra num conjunto
+`u:<user_id>`; o `revoke_all` lê o conjunto, apaga cada `s:<id>` e por fim o próprio
+conjunto. `POST /v1/logout-all` exige sessão válida (só revoga as próprias) e, ao contrário
+do `logout` comum, **não engole falha** — quem clica está reagindo a um comprometimento, e
+dizer "saiu" quando a revogação falhou seria a pior mentira. Namespace configurável no
+store para os testes ficarem isolados no Redis compartilhado.
+
+**CORS/CSRF era proteção emergente; virou proteção testada (2026-07-29).** Não há token
+CSRF nem `CorsLayer`, e isso é a postura segura, não uma lacuna: sem CORS é mesma-origem
+apenas, e as rotas de mutação exigem `Json<T>`, que um `<form>` cross-site não produz. O
+risco era isso sumir no dia que alguém adicionasse um `CorsLayer` permissivo sem refazer o
+raciocínio. Agora o CI é dono dessa garantia: testes que falham se um preflight cross-origin
+receber `allow-origin`, se um POST `form-urlencoded` numa rota de mutação for aceito, ou se o
+cookie de sessão perder `HttpOnly`/`Secure`/`SameSite=Lax`. Quando o CORS finalmente for
+preciso (a extensão da Etapa 13), tem de ser **escopado**, nunca permissivo — e o teste
+obriga a decisão a ser consciente.
+
+**Pendência — o `signup` entrega a enumeração que o `login` protege.** O login responde
+igual nos dois casos, com o mesmo `type` e o mesmo custo de CPU. O signup responde 409
+quando o e-mail existe, então basta tentar cadastrar para saber quem tem conta.
+
+Fechar isso exige e-mail: responder 200, não criar nada e mandar mensagem ao endereço —
+quem é dono descobre, quem sonda não. Sem caminho de e-mail, a alternativa seria responder
+200 mentindo, e deixar sem explicação quem digitou um endereço já cadastrado. Fica
+registrado como escolha, não como esquecimento.
+
+**Não há exclusão de conta, e não é omissão.** `short_codes.owner_id` referencia `users`,
+então a FK barra o `DELETE`; um `ON DELETE SET NULL` transformaria os links da pessoa em
+links anônimos. Qual das duas é a resposta certa é decisão de produto, e ela precisa ser
+tomada **antes** da Etapa 12 — analytics com dono que pode desaparecer é pergunta sem
+resposta depois que existem dados.
 
 ## Etapa 12 — Analytics de clique
 
 - [ ] `302` quando o código tem dono, `301` quando não tem — o caminho anônimo
       continua cacheável pelo browser e é o que o k6 exercita
-- [ ] Flag `owned` no valor cacheado; **monotônica** (`false → true`, nunca volta),
-      com invalidação da chave no exato momento em que o código ganha o primeiro dono
+- [x] ~~Flag `owned` no valor cacheado~~ — **desnecessário** desde a Etapa 11: o código
+      é por dono, então `short_codes.owner_id` já responde isso sem tocar o cache
+- [ ] `click_events` referencia **`short_codes.id`**, não `urls.id` — é a linha que faz
+      `count(*) WHERE code_id = $1` ser a métrica de uma pessoa em vez de uma soma ambígua
 - [ ] Evento por clique sai do hot path: `mpsc` → worker → insert em lote
 - [ ] **Os dois destinos no código**, escolhidos por config: `analytics.backend =
       postgres | clickhouse | off`
@@ -521,17 +603,20 @@ config e uma medição, não um rewrite.
 O ADR de 2026-07-26 já dizia que a analytics de clique é o bom caso do ClickHouse; o
 que ele não dizia é que "bom caso" e "vale o custo agora" são perguntas diferentes.
 
-**Três coisas que esta etapa quebra, e a resposta de cada uma:**
+**Eram três coisas que esta etapa quebrava. A Etapa 11 dissolveu duas.**
 
-1. **O 301 impede contar cliques** — o browser cacheia e o segundo clique nunca chega
-   ao servidor. Por isso só a URL com dono vira 302.
-2. **Um dono faz o código inteiro virar 302**, inclusive para quem chegou pelo link
-   criado anonimamente. Consequência direta do ownership N:N; aceita conscientemente.
-3. **O cache sem TTL supunha imutabilidade total** (Etapa 5). Com `owned` no valor
-   cacheado isso deixa de valer. A imutabilidade é recuperada tornando o flag
-   monotônico: só há um instante de invalidação por código, na primeira reivindicação.
-   Remover a URL da lista **não** devolve o 301 — e não poderia, porque um 301 já
-   cacheado no browser é irreversível.
+1. **O 301 impede contar cliques** — o browser cacheia e o segundo clique nunca chega ao
+   servidor. Por isso só o código com dono vira 302. Esta continua de pé: é da natureza
+   do problema, não do modelo de dados.
+2. ~~Um dono faz o código inteiro virar 302, inclusive para quem chegou pelo link
+   anônimo.~~ **Resolvido.** Era consequência do código compartilhado; com código por
+   dono, o anônimo continua 301 e cacheável — que é justamente o caminho que o k6 mede.
+3. ~~O cache sem TTL supunha imutabilidade total, e o flag `owned` a quebrava.~~
+   **Resolvido, e por não existir.** Sem flag no valor cacheado não há invalidação, não há
+   monotonicidade a garantir e o cache volta a ser imutável sem ressalva.
+
+O que **não** mudou: remover um link da lista não devolve o 301, e não poderia — um 301 já
+cacheado no browser é irreversível.
 
 **Restrição de infra que vale para as duas opções:** o alvo é um nó **pequeno e
 único**, que já roda Postgres, Redis, as réplicas da API e o front. É esse orçamento —

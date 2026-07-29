@@ -29,6 +29,28 @@ pub enum AppError {
     #[error("shortcode not found")]
     NotFound,
 
+    #[error("authentication required")]
+    Unauthorized,
+
+    /// Deliberately says nothing about which half was wrong. "No such account"
+    /// and "wrong password" as separate answers turn the login form into an
+    /// account enumerator.
+    #[error("invalid email or password")]
+    InvalidCredentials,
+
+    #[error("email is already registered")]
+    EmailTaken,
+
+    #[error("{0}")]
+    InvalidInput(&'static str),
+
+    /// No capacity for password hashing right now.
+    ///
+    /// Not a client error and not a bug: the work is bounded on purpose, and
+    /// saying so beats queueing until something times out.
+    #[error("no capacity to process credentials right now")]
+    Overloaded,
+
     #[error(transparent)]
     Database(#[from] sqlx::Error),
 
@@ -39,10 +61,16 @@ pub enum AppError {
 impl AppError {
     fn status(&self) -> StatusCode {
         match self {
-            Self::InvalidUrl(_) | Self::InvalidBody(_) | Self::UrlTooLong => {
-                StatusCode::BAD_REQUEST
-            }
+            Self::InvalidUrl(_)
+            | Self::InvalidBody(_)
+            | Self::UrlTooLong
+            | Self::InvalidInput(_) => StatusCode::BAD_REQUEST,
             Self::NotFound => StatusCode::NOT_FOUND,
+            // 401 for both: no session and bad credentials are the same answer
+            // to the client, and 403 would imply the caller is known.
+            Self::Unauthorized | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
+            Self::EmailTaken => StatusCode::CONFLICT,
+            Self::Overloaded => StatusCode::SERVICE_UNAVAILABLE,
             Self::Database(err) if is_check_violation(err) => StatusCode::BAD_REQUEST,
             Self::Database(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -61,6 +89,13 @@ impl AppError {
             // the database: from the client's side it is one failure, and the
             // `type` is what clients match on.
             Self::UrlTooLong => "https://oxid.uk/problems/url-too-long",
+            Self::Unauthorized => "https://oxid.uk/problems/unauthorized",
+            // One identifier for both halves of a failed login, so a client
+            // cannot tell them apart by matching on `type` either.
+            Self::InvalidCredentials => "https://oxid.uk/problems/invalid-credentials",
+            Self::EmailTaken => "https://oxid.uk/problems/email-taken",
+            Self::Overloaded => "https://oxid.uk/problems/overloaded",
+            Self::InvalidInput(_) => "https://oxid.uk/problems/invalid-input",
             Self::Database(err) if is_check_violation(err) => {
                 "https://oxid.uk/problems/url-too-long"
             }
@@ -75,6 +110,14 @@ impl AppError {
             Self::InvalidBody(_) => "Invalid request body",
             Self::NotFound => "Shortcode not found",
             Self::UrlTooLong => "URL too long",
+            Self::Unauthorized => "Authentication required",
+            // Same title for both halves of a failed login. A client matching on
+            // `title` must not be able to tell "no such account" from "wrong
+            // password" either.
+            Self::InvalidCredentials => "Invalid credentials",
+            Self::EmailTaken => "Email already registered",
+            Self::Overloaded => "Temporarily overloaded",
+            Self::InvalidInput(_) => "Invalid input",
             Self::Database(err) if is_check_violation(err) => "URL too long",
             Self::Database(_) | Self::Internal(_) => "Internal error",
         }
@@ -85,9 +128,16 @@ impl AppError {
     /// to whoever probes the API.
     fn detail(&self) -> String {
         match self {
-            Self::InvalidUrl(msg) | Self::Internal(msg) => (*msg).to_owned(),
+            Self::InvalidUrl(msg) | Self::Internal(msg) | Self::InvalidInput(msg) => {
+                (*msg).to_owned()
+            }
             Self::InvalidBody(msg) => msg.clone(),
             Self::NotFound => "no url is registered under this shortcode".to_owned(),
+            Self::Unauthorized => "sign in to use this endpoint".to_owned(),
+            // Says nothing about which half failed, on purpose.
+            Self::InvalidCredentials => "invalid email or password".to_owned(),
+            Self::EmailTaken => "an account with this email already exists".to_owned(),
+            Self::Overloaded => "try again in a moment".to_owned(),
             // Both spellings of the same failure quote `MAX_URL_LEN`, so the
             // number in the message cannot drift away from the number enforced.
             Self::UrlTooLong => self.to_string(),
@@ -125,6 +175,14 @@ impl IntoResponse for AppError {
         response
             .headers_mut()
             .insert(header::CONTENT_TYPE, HeaderValue::from_static(PROBLEM_JSON));
+
+        // Turns "try again" from advice into something a client can act on
+        // without guessing an interval — and without hammering while it waits.
+        if matches!(self, Self::Overloaded) {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("2"));
+        }
 
         response
     }

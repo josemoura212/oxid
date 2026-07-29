@@ -16,6 +16,16 @@ pub struct Settings {
     pub database: DatabaseSettings,
     pub cache: CacheSettings,
     pub rate_limit: RateLimitSettings,
+    pub session: SessionSettings,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionSettings {
+    /// How long a session survives without being renewed.
+    ///
+    /// Fixed, not sliding. Sliding would mean a write to Redis on every
+    /// authenticated request, and a tab left open would never expire.
+    pub ttl_seconds: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -110,18 +120,53 @@ impl CacheSettings {
     }
 }
 
-/// Applies to `POST /v1/shorten` only.
+/// Limits on the two routes that cost something to abuse.
 ///
 /// The redirect is deliberately unlimited: it is the path the cache absorbs, the
 /// one stages 9 and 10 push to 11k req/s, and throttling it would punish exactly
-/// the traffic the system exists to serve. Writing is where abuse costs a row,
-/// so that is where the limit belongs.
+/// the traffic the system exists to serve. Writing costs a row; logging in costs
+/// an Argon2 verification.
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct RateLimitSettings {
     /// Sustained rate, per client key.
     pub shorten_per_second: u64,
     /// How much a client may exceed the sustained rate before being throttled.
     pub shorten_burst: u32,
+
+    /// Login is limited far harder than writing, and not because of rows.
+    ///
+    /// Each attempt spends ~19 MiB and tens of milliseconds of Argon2 by
+    /// design — and the decoy path means an attacker gets that cost without
+    /// needing a real account. On a small node a few dozen attempts a second
+    /// are enough to saturate CPU, so this limit is a denial-of-service control
+    /// first and a credential-stuffing control second.
+    pub login_per_second: u64,
+    pub login_burst: u32,
+
+    /// How many password hashes may run at once, across every caller.
+    ///
+    /// The per-IP limit above depends on correctly identifying the client, and
+    /// behind a CDN that has already failed once without a symptom. This does not
+    /// depend on it: it bounds the total Argon2 in flight, so a flood becomes a
+    /// queue rather than a saturated node.
+    ///
+    /// One is not as restrictive as it reads. A verification is tens of
+    /// milliseconds, so a single slot still serves more logins per second than
+    /// `login_per_second` allows — raising it would only widen the damage a
+    /// successful flood can do.
+    pub hash_concurrency: usize,
+
+    /// How long a request waits for a slot before answering 503.
+    ///
+    /// Bounded, because waiting forever trades a saturated CPU for an unbounded
+    /// queue — which fails later, less legibly, and while holding connections.
+    pub hash_wait_ms: u64,
+}
+
+impl RateLimitSettings {
+    pub const fn hash_wait(&self) -> Duration {
+        Duration::from_millis(self.hash_wait_ms)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -232,6 +232,41 @@ Três detalhes que valem saber:
   velhos que ele. `total - idle` é o número que importa: grudado em
   `max_connections` significa fila no pool, não no banco.
 
+## Desempenho medido
+
+Etapa 9, contra o deploy no ar, num nó **arm64 de 2 vCPU que ele não tem só para
+si** — a mesma máquina roda o banco, o cache, o proxy, a pilha de monitoramento e
+projetos alheios. Os scripts estão em [`infra/k6`](infra/k6).
+
+| | |
+|---|---|
+| Sustentado, com todos os thresholds verdes | **2.546 req/s** (2.315 leituras + 231 escritas) |
+| p95 de leitura, no cliente | **23,2 ms** — dos quais 19 ms são ida e volta de rede |
+| p95 de leitura, no servidor | **~4 ms** |
+| Erros | **zero**, em toda escala testada |
+| Hit rate do cache sob carga | **100%** — 5.613 hits/s, nenhum miss |
+| Escritas, medidas ao criar o pool | **1.230/s**, zero falhas |
+
+O zero erros vale mesmo onde a latência não valeu: a 6.366 req/s o p95 degradou
+para 186 ms, mas 1,2 milhão de requisições não produziram nenhum 5xx nem uma
+conexão recusada. O serviço enfileira em vez de quebrar.
+
+**O gargalo é CPU**, e a medição descarta os suspeitos de sempre. O pool de
+conexões ficou ocioso o tempo todo — na proporção 10:1 as leituras nunca chegam ao
+banco. Toda consulta ao cache foi acerto. O PSI do nó mostrou todas as tarefas do
+cluster bloqueadas esperando CPU em 17% do tempo.
+
+O joelho é estreito: o p95 salta de 23 ms para 109 ms com 1,5x de carga. Isso é
+fila cruzando a saturação, não degradação suave — e é por isso que a Etapa 10 tem
+de acrescentar capacidade em vez de ajustar configuração. A escala total exigiria
+cerca de 2.780 mCPU contra os 2.000 que o nó tem inteiro.
+
+Uma nota de método que generaliza: a carga foi gerada de fora do datacentro, a 19
+ms de distância. Isso acabou não importando, porque a diferença entre os percentis
+do cliente e do servidor encolhe exatamente onde a fila começa — 186,5 ms contra
+181,7 ms na saturação. Medir dos dois lados é o que torna o resultado defensável,
+já que a telemetria do servidor não depende do gerador.
+
 ## Desenvolvimento
 
 ```bash
@@ -290,9 +325,9 @@ de outra pessoa é ruído, não ponto de partida.
 | 5.1 Links salvos no navegador | ✅ |
 | 5.2 Acertos do Lighthouse | parcial — contraste, ARIA e alvos de toque prontos |
 | 6. Configuração e dimensionamento | ✅ (antecipada) |
-| 7. Observabilidade (Prometheus + Grafana) | |
-| 8. Topologia completa (2 instâncias atrás do Nginx) | |
-| 9. Teste de carga com k6 | |
+| 7. Observabilidade (Prometheus + Grafana) | ✅ |
+| 8. O teto do nó único | ✅ |
+| 9. Teste de carga com k6 | ✅ — teto medido, gargalo identificado |
 | 10. Ciclo de otimização até escala total | |
 | 11. Contas e sessão | |
 | 12. Analytics de clique | |

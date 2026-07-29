@@ -228,6 +228,41 @@ Three details worth knowing:
   scrape. `total - idle` is the number that matters: pinned at `max_connections`
   means requests are queueing on the pool rather than on the database.
 
+## Measured performance
+
+Stage 9, against the live deployment on a **2 vCPU arm64 node it does not have to
+itself** — the same box runs the database, the cache, the proxy, the monitoring
+stack and unrelated projects. Scripts are in [`infra/k6`](infra/k6).
+
+| | |
+|---|---|
+| Sustained, all thresholds green | **2,546 req/s** (2,315 reads + 231 writes) |
+| Read p95, client side | **23.2 ms** — of which 19 ms is network round trip |
+| Read p95, server side | **~4 ms** |
+| Errors | **zero**, at every scale tested |
+| Cache hit rate under load | **100%** — 5,613 hits/s, no misses |
+| Writes, measured while seeding | **1,230/s** with zero failures |
+
+Zero errors held even where latency did not: at 6,366 req/s the p95 degraded to
+186 ms, but 1.2 million requests produced no 5xx and no refused connections. The
+service queues rather than breaking.
+
+**The bottleneck is CPU**, and the measurement rules out the usual suspects. The
+connection pool sat fully idle throughout — at a 10:1 read ratio the reads never
+reach the database. Every cache lookup was a hit. Pressure stall information on
+the node showed all cluster tasks blocked waiting for CPU 17% of the time.
+
+The knee is narrow: p95 jumps from 23 ms to 109 ms for 1.5x the load. That is a
+queue crossing saturation, not gradual degradation — which is why stage 10 has to
+add capacity rather than tune configuration. Full scale would need roughly 2,780
+mCPU against the 2,000 the node has in total.
+
+One method note that generalises: load was generated from outside the datacentre,
+19 ms away. That turned out not to matter, because the gap between client and
+server percentiles collapses exactly where queueing begins — 186.5 ms against
+181.7 ms at saturation. Measuring from both sides is what makes the run
+defensible, since server telemetry does not depend on the generator.
+
 ## Development
 
 ```bash
@@ -286,9 +321,9 @@ noise rather than a starting point.
 | 5.1 Saved links in the browser | ✅ |
 | 5.2 Lighthouse fixes | partly — contrast, ARIA and touch targets done |
 | 6. Configuration and pool sizing | ✅ (pulled forward) |
-| 7. Observability (Prometheus + Grafana) | |
-| 8. Full topology (2 instances behind Nginx) | |
-| 9. Load testing with k6 | |
+| 7. Observability (Prometheus + Grafana) | ✅ |
+| 8. Limits of a single node | ✅ |
+| 9. Load testing with k6 | ✅ — ceiling measured, bottleneck named |
 | 10. Optimization loop to full scale | |
 | 11. Accounts and sessions | |
 | 12. Click analytics | |

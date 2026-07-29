@@ -28,6 +28,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      clickhouse:
+        condition: service_healthy
 
     environment:
       # `postgres` is the compose service name — inside the network it resolves
@@ -38,6 +40,11 @@ services:
       # may be shifted to avoid clashes) do not matter here.
       APP_CACHE__HOST: redis
       APP_CACHE__PORT: "6379"
+      # Same reason: from inside the container, ClickHouse is the `clickhouse`
+      # service, not localhost. `local.yaml` sets the password; the host is an
+      # env override so the compose network name wins over the base config.
+      APP_ANALYTICS__CLICKHOUSE__HOST: clickhouse
+      APP_ANALYTICS__CLICKHOUSE__PORT: "8123"
       # 0.0.0.0 so the published port actually reaches the process.
       APP_APPLICATION__HOST: 0.0.0.0
       # The redirect lives at `/{code}`, and in dev `/` on :8080 is the trunk dev

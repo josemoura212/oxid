@@ -63,12 +63,10 @@ impl AppState {
             decoy,
         );
 
-        // Off by default, so a plain boot never needs ClickHouse running. When a
-        // backend is selected, this connects and creates the table — failing the
-        // boot if it cannot, rather than dropping clicks silently later.
-        let clicks = ClickSink::connect(&settings.analytics)
-            .await
-            .context("failed to connect the analytics backend")?;
+        // Off by default. When a backend is selected it connects and creates the
+        // table, and degrades to disabled if it cannot — analytics never fails
+        // the boot, because it is on no request path. See [`ClickSink::connect`].
+        let clicks = ClickSink::connect(&settings.analytics).await;
 
         let base_url = settings.application.base_url.clone();
         let secure_cookies = base_url.starts_with("https://");

@@ -1,6 +1,6 @@
 //! Runs against a real ClickHouse (the compose service on 8123). Each test uses
-//! a `code_id` unique to its name, so the shared table needs no isolation — the
-//! rows never overlap.
+//! a `code_id` unique to this process, so reruns against the persistent table do
+//! not accumulate.
 #![allow(clippy::unwrap_used)]
 
 use oxid::{
@@ -28,12 +28,29 @@ fn settings() -> AnalyticsSettings {
     }
 }
 
+/// Connects for real. `connect` degrades to `Disabled` when ClickHouse is
+/// unreachable rather than erroring, so this asserts the sink is actually active
+/// — otherwise a missing ClickHouse would turn these tests into silent no-ops
+/// that pass against zero rows.
 async fn sink() -> ClickSink {
-    ClickSink::connect(&settings()).await.unwrap()
+    let sink = ClickSink::connect(&settings()).await;
+    assert!(
+        sink.is_active(),
+        "ClickHouse is not reachable; these tests need the compose service on 8123"
+    );
+    sink
 }
 
 fn at(y: i32, m: u32, d: u32, h: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
+}
+
+/// A code id unique to this test process, so a rerun against the same persistent
+/// ClickHouse does not accumulate rows for a fixed id. `n` distinguishes tests
+/// within a run; the process id distinguishes runs. CI starts with a clean
+/// server, so it does not need this — local reruns do.
+fn code_id(n: i64) -> i64 {
+    9_000_000_000 + i64::from(std::process::id()) * 10 + n
 }
 
 fn event(code_id: i64, when: DateTime<Utc>, visitor: u64) -> ClickEvent {
@@ -74,7 +91,7 @@ async fn disabled_records_nothing_and_summarizes_empty() {
 #[tokio::test]
 async fn recorded_clicks_come_back_in_the_summary() {
     let sink = sink().await;
-    let code_id = 900_001;
+    let code_id = code_id(1);
 
     // Three clicks across two days; two share a visitor, so unique is 2.
     sink.record(&[
@@ -109,10 +126,13 @@ async fn recorded_clicks_come_back_in_the_summary() {
 async fn a_code_never_sees_another_codes_clicks() {
     let sink = sink().await;
 
-    sink.record(&[event(900_002, at(2026, 7, 5, 12), 1)])
+    let code_a = code_id(2);
+    let code_b = code_id(3);
+
+    sink.record(&[event(code_a, at(2026, 7, 5, 12), 1)])
         .await
         .unwrap();
-    sink.record(&[event(900_003, at(2026, 7, 5, 12), 1)])
+    sink.record(&[event(code_b, at(2026, 7, 5, 12), 1)])
         .await
         .unwrap();
 
@@ -122,7 +142,7 @@ async fn a_code_never_sees_another_codes_clicks() {
         from: at(2026, 7, 1, 0),
         to: at(2026, 8, 1, 0),
     };
-    let summary = sink.summary(900_002, range).await.unwrap();
+    let summary = sink.summary(code_a, range).await.unwrap();
 
     assert_eq!(summary.total, 1, "must not count the other code's click");
 }

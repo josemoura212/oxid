@@ -55,16 +55,29 @@ impl ClickSink {
         Self::Disabled
     }
 
+    /// Whether a backend is actually connected. The hot path checks this before
+    /// building an event, so a disabled sink costs nothing beyond the branch —
+    /// and it distinguishes a configured-but-unreachable backend, which
+    /// [`connect`] quietly degraded, from one that is genuinely recording.
+    pub const fn is_active(&self) -> bool {
+        matches!(self, Self::ClickHouse(_))
+    }
+
     /// Connects and ensures the table exists.
     ///
-    /// Running the DDL on every boot is deliberate: `CREATE TABLE IF NOT EXISTS`
-    /// is idempotent, so the schema travels with the code instead of a separate
-    /// migration step that a fresh environment can forget. Failing here fails the
-    /// boot — a misconfigured analytics backend should be loud, not a surprise on
-    /// the first click.
-    pub async fn connect(settings: &AnalyticsSettings) -> Result<Self, SinkError> {
+    /// Running the DDL on connect is deliberate: `CREATE TABLE IF NOT EXISTS` is
+    /// idempotent, so the schema travels with the code instead of a separate
+    /// migration step a fresh environment can forget.
+    ///
+    /// A failure here **degrades to `Disabled`**, it does not fail the boot. This
+    /// is the opposite of the cache, on purpose: a cache that cannot connect
+    /// means every read is slow, a problem worth stopping for; analytics touches
+    /// no request path, so letting it take the whole API down — the redirect
+    /// included — would be a side-channel outranking the product. The warning is
+    /// loud enough to notice; the redirect keeps serving.
+    pub async fn connect(settings: &AnalyticsSettings) -> Self {
         match settings.backend {
-            AnalyticsBackend::Off => Ok(Self::Disabled),
+            AnalyticsBackend::Off => Self::Disabled,
             AnalyticsBackend::ClickHouse => {
                 let ch = &settings.clickhouse;
                 let client = Client::default()
@@ -73,9 +86,16 @@ impl ClickSink {
                     .with_password(ch.password())
                     .with_database(&ch.database);
 
-                client.query(SCHEMA).execute().await?;
-
-                Ok(Self::ClickHouse(Box::new(client)))
+                match client.query(SCHEMA).execute().await {
+                    Ok(()) => Self::ClickHouse(Box::new(client)),
+                    Err(err) => {
+                        tracing::warn!(
+                            %err,
+                            "analytics backend unreachable; continuing with analytics disabled"
+                        );
+                        Self::Disabled
+                    }
+                }
             }
         }
     }

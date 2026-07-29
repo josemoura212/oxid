@@ -96,7 +96,10 @@ services:
         hard: 262144
 
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      # 127.0.0.1, not localhost: localhost resolves to ::1 and ClickHouse binds
+      # IPv4 only by default, so `localhost` gets connection-refused and the
+      # container never reports healthy.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
       interval: 5s
       timeout: 3s
       retries: 10

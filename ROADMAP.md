@@ -629,15 +629,21 @@ Um clique no ícone encurta a página aberta e põe o link curto na área de tra
 É onde o produto encosta no uso real: hoje encurtar exige sair da página, abrir o oxid,
 copiar a URL e colar. A extensão apaga esses quatro passos.
 
-Depois da Etapa 11 de propósito — sem conta a extensão só encurta; com conta o link cai na
-lista da pessoa, que é o que a torna útil no dia a dia.
+**O um-clique exige estar logado.** É a decisão de produto desta etapa: sem conta, a
+extensão não tem onde guardar o link — a lista por browser da Etapa 5.1 é do site, não da
+extensão, e um link encurtado que some é o único jeito de o produto falhar sem dar erro
+(Etapa 5.1). Com conta, o link cai na lista da pessoa e a extensão vira útil no dia a dia.
+Depois da Etapa 11 de propósito, porque é ela que dá o "logado" em que isto se apoia.
 
 - [ ] Manifest V3 (Chrome/Edge) e WebExtensions (Firefox) a partir do mesmo código
-- [ ] Ação do ícone: URL da aba ativa → `POST /v1/shorten` → clipboard → badge de confirmação
+- [ ] Estado de login na extensão: sem credencial, o ícone abre "entre no oxid para usar",
+      não um erro. Com credencial, é o um-clique
+- [ ] Ação do ícone: URL da aba ativa → `POST /v1/shorten` autenticado → clipboard → badge
 - [ ] Menu de contexto ("encurtar este link"), além da página atual
 - [ ] Publicar nas duas lojas
 
-🎯 Encurtar a aba atual sem sair dela, com o link já copiado.
+🎯 Logado, um clique encurta a aba atual e copia o link, e ele aparece na lista da conta.
+   Deslogado, o clique convida a entrar em vez de falhar.
 
 **Permissão mínima é decisão de design, não detalhe.** `activeTab` dá acesso à aba **apenas
 no clique**, e é tudo que esta extensão precisa. Pedir `host_permissions: ["<all_urls>"]` —
@@ -692,6 +698,83 @@ ou tabela de agregado diário — a mesma decisão de rollup que a Etapa 12 já 
 **Grafana já resolve os números de sistema.** Este painel existe para o que ele não tem:
 dado de produto. Reimplementar gráfico de latência aqui seria trabalho duplicado com
 resultado pior — o caminho é embutir o painel do Grafana ou apontar para ele.
+
+## Etapa 15 — Confirmação de e-mail (Resend)
+
+**Não é urgente: login já funciona sem confirmar e-mail.** Fica aqui, depois do núcleo, de
+propósito. O que ela paga é fechar a enumeração do signup (a pendência da Etapa 11) — hoje
+um trade-off aceito, não um bug. Enquanto não vier, o `409 EmailTaken` continua entregando
+quais e-mails têm conta.
+
+- [ ] Integração com **Resend** atrás de um tipo `Mailer`, com variante desabilitada — do
+      mesmo jeito que `Cache::disabled()` e o `ClickSink` da Etapa 12. Local e teste **não
+      enviam**: registram o link no log. Sem isso, todo teste de cadastro manda e-mail de
+      verdade e gasta cota
+- [ ] Coluna `email_verified_at timestamptz NULL` em `users`
+- [ ] Token de confirmação: 128 bits aleatórios, no Redis com TTL, chave → `user_id`.
+      Não é JWT — um token opaco de uso único é mais simples e revogável, e não há claim
+      nenhuma que valha assinar
+- [ ] `POST /v1/verify-email` consome o token, grava `email_verified_at`, apaga o token
+- [ ] Reenvio: `POST /v1/resend-verification`, com rate limit próprio (cada envio custa uma
+      chamada ao Resend e é vetor de e-mail bombing)
+
+🎯 Cadastrar com um endereço novo e com um já cadastrado devolve **a mesma resposta HTTP** e
+   o mesmo tempo; só o dono do endereço descobre qual foi, pela caixa de entrada.
+
+**Como a enumeração some.** O signup passa a responder sempre `200 "verifique seu e-mail"`.
+Endereço novo → cria a conta não-verificada e manda o link de confirmação. Endereço já
+existente → **não cria nada** e manda um "alguém tentou cadastrar com seu e-mail". A
+resposta ao cliente é idêntica nos dois casos; a diferença viaja só pelo canal que o
+atacante não controla. O `409 EmailTaken` de hoje deixa de existir.
+
+**O que "não verificado" bloqueia é decisão de produto, não técnica.** Duas posturas
+coerentes: (a) não deixa entrar até confirmar — mais rígido, e trava quem não recebeu o
+e-mail; (b) deixa usar e mostra um aviso, exigindo confirmação só para o reset de senha.
+Para um encurtador, (b) atrita menos e não perde ninguém por causa de spam filter. A
+escolha fica registrada quando for feita.
+
+**E-mail é canal que você não controla.** Entrega não é garantida — spam, greylisting,
+domínio novo sem reputação. Duas consequências: o fluxo **precisa** de reenviar, e o
+domínio precisa de SPF/DKIM/DMARC configurados no Resend antes de qualquer envio valer.
+Sem isso o link de confirmação cai em spam e a conta parece quebrada.
+
+**Se o Resend cair, o cadastro não pode cair junto.** A conta é criada primeiro; o envio
+vem depois e a falha dele não derruba o signup — a pessoa pede reenvio. Amarrar a criação
+da conta ao sucesso do envio transforma um provedor de e-mail fora do ar numa
+indisponibilidade do cadastro.
+
+## Etapa 16 — Reset de senha (Resend)
+
+Depois da Etapa 15 — reaproveita o `Mailer` já integrado. Duas etapas distintas de
+propósito: confirmação prova que o endereço é seu; reset devolve o acesso quando a senha
+se perde. São fluxos, tokens e telas diferentes, e juntar os dois num só esconde que as
+regras de segurança de cada um também são diferentes.
+
+- [ ] `POST /v1/forgot-password` recebe o e-mail e responde **sempre 200** — mesma defesa
+      contra enumeração da Etapa 15. Se existe, manda o link; se não, não faz nada
+- [ ] Token de reset: 128 bits, Redis, TTL **curto** (15–30 min) e **uso único** — some no
+      primeiro uso. Mais curto que o de confirmação, porque dá acesso à conta, não só a
+      prová-la
+- [ ] `POST /v1/reset-password` valida o token, valida a nova senha (mesmas regras do
+      signup), re-hasheia e grava
+- [ ] **Ao trocar a senha, revoga todas as sessões** — é exatamente o `revoke_all` do índice
+      reverso que a Etapa 11 já construiu. Quem redefine senha geralmente perdeu o controle
+      da conta; deixar as sessões antigas vivas anularia o reset
+- [ ] Rate limit próprio no `forgot-password`: cada chamada é um envio de e-mail (custo e
+      e-mail bombing) e o Argon2 do reset é caro
+
+🎯 Esqueci a senha → recebo o link → defino outra → entro com ela, e **toda sessão anterior
+   deixou de valer**.
+
+**O reset é o caminho de tomada de conta mais provável, então ele é o mais duro.** Token
+curto, uso único, e revogação de tudo ao concluir. O e-mail de reset também deve avisar
+"se não foi você, ignore" — sem link de ação, porque um link de "não fui eu" clicável vira
+outro vetor.
+
+**Não confirmar que o reset chegou também é anti-enumeração.** A tentação é responder "não
+existe conta com esse e-mail" para ajudar quem digitou errado. Isso reabre exatamente o
+oráculo que a Etapa 15 fechou. A resposta é sempre a mesma; quem não recebe, ou errou o
+endereço, ou não tem conta — e o produto não diz qual.
 
 ---
 

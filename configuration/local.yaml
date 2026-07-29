@@ -1,2 +1,10 @@
 database:
   password: oxid
+
+# Analytics on locally, so the ClickHouse path is actually exercised in
+# development rather than only in production. The compose stack brings the server
+# up on 8123.
+analytics:
+  backend: clickhouse
+  clickhouse:
+    password: oxid

@@ -2,6 +2,7 @@ use anyhow::Context;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 use crate::{
+    analytics::ClickSink,
     auth::{
         password::{Decoy, Hasher},
         session::SessionStore,
@@ -15,6 +16,10 @@ pub struct AppState {
     pub db_pool: PgPool,
     pub cache: Cache,
     pub sessions: SessionStore,
+    /// Where click events go. `Disabled` unless the config selects a backend, and
+    /// nothing writes to it yet — the hot-path emit and the batching worker are
+    /// later slices. Held here so a misconfigured backend fails the boot.
+    pub clicks: ClickSink,
     pub base_url: String,
     /// Runs Argon2 off the runtime and under a concurrency cap. Holds the decoy,
     /// so the unknown-e-mail path costs the same as the known one — and takes a
@@ -58,6 +63,13 @@ impl AppState {
             decoy,
         );
 
+        // Off by default, so a plain boot never needs ClickHouse running. When a
+        // backend is selected, this connects and creates the table — failing the
+        // boot if it cannot, rather than dropping clicks silently later.
+        let clicks = ClickSink::connect(&settings.analytics)
+            .await
+            .context("failed to connect the analytics backend")?;
+
         let base_url = settings.application.base_url.clone();
         let secure_cookies = base_url.starts_with("https://");
 
@@ -68,6 +80,7 @@ impl AppState {
             db_pool,
             cache,
             sessions,
+            clicks,
             base_url,
             hasher,
             secure_cookies,

@@ -529,6 +529,32 @@ resposta depois que existem dados.
 
 ## Etapa 12 — Analytics de clique
 
+**Decisão (2026-07-29): ClickHouse, não Postgres, e TTL de 30 dias.** O roadmap sugeria
+`postgres` como default e ClickHouse opcional; a escolha foi ClickHouse direto, porque é a
+ferramenta feita para `count`/`uniq` sobre janela de tempo, e num projeto de aprender
+system design o paradigma colunar vale por si. O TTL caiu para **30 dias** — uma janela
+rolante, não o arquivo de 10 anos que dimensiona o resto do sistema. Duas consequências:
+
+- **Cai a projeção de bilhões de linhas.** 30 dias de clique é pequeno, e a pressão de
+  memória no nó de 2 vCPU deixa de ser problema (com `mem_limit` no container, obrigatório).
+- **A cadeia de FK some.** ClickHouse não referencia o `users`/`short_codes` do Postgres,
+  então excluir conta **não** cascateia para os cliques — vira `ALTER TABLE ... DELETE`
+  explícito. Registrado como decisão, não esquecimento. Isso *substitui* o pré-requisito
+  de `ON DELETE` que a Etapa 11 travava: com backend desacoplado, não há cascata a decidir.
+
+**Duas telas de análise** (2026-07-29): uma **geral** (série de cliques por dia com uma
+linha por código do dono) e uma **individual** por link (a mesma série de um código só, com
+range 7/14/21/28d). Ambas saem do mesmo `summary()` — a única diferença é o filtro por
+`code_id`, e o `ORDER BY (code_id, created_at)` faz as duas leituras serem rápidas.
+
+- [x] **Fatia 1 — o sink, inerte.** Tabela `click_events` (`MergeTree`, `PARTITION BY
+      toYYYYMM`, `ORDER BY (code_id, created_at)`, `TTL 30 DAY`), o enum `ClickSink`
+      (`Disabled`/`ClickHouse`) com `record` (insert em lote) e `summary` (`count` +
+      `uniq(visitor_hash)` + série `toStartOfDay`) implementados e testados contra o
+      ClickHouse real. ClickHouse no compose com memória limitada; config `analytics.backend
+      = off | clickhouse`, `off` por default. Nada plugado no hot path ainda
+- [ ] **Fatia 2 — o pipeline:** `mpsc` → worker → `record` em lote. `try_send` que descarta
+      e conta o descarte se encher, nunca bloqueia
 - [ ] `302` quando o código tem dono, `301` quando não tem — o caminho anônimo
       continua cacheável pelo browser e é o que o k6 exercita
 - [x] ~~Flag `owned` no valor cacheado~~ — **desnecessário** desde a Etapa 11: o código

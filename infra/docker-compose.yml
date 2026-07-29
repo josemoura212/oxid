@@ -64,6 +64,49 @@ services:
       retries: 10
       start_period: 5s
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3-alpine
+    container_name: oxid-clickhouse
+    restart: unless-stopped
+
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-oxid}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-oxid}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-oxid}
+      # Off by default the default user answers with no password from anywhere;
+      # this makes the named user the only way in.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+
+    ports:
+      # 8123 is the HTTP interface the `clickhouse` crate talks to. 9000 is the
+      # native protocol, published only so `clickhouse-client` can attach for
+      # debugging — the app never uses it.
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+
+    # ClickHouse assumes the machine is its own and will size caches to all of
+    # RAM. On a node that already runs Postgres, Redis and the API, that is how
+    # it starts fighting them for the 12 GB — so the ceiling is explicit. The
+    # 30-day TTL keeps the working set small enough for this to be comfortable.
+    mem_limit: ${CLICKHOUSE_MEM_LIMIT:-2g}
+
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+
 volumes:
   postgres-data:
     name: oxid-postgres-data
+  clickhouse-data:
+    name: oxid-clickhouse-data

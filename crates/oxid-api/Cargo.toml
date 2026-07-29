@@ -36,6 +36,10 @@ anyhow.workspace = true
 argon2.workspace = true
 axum.workspace = true
 axum-extra.workspace = true
+# HTTP interface (not the native protocol): one fewer port and it multiplexes.
+# `chrono` so a ClickEvent carries a `DateTime<Utc>`; `inserter` for the batched
+# writes the click worker needs — ClickHouse punishes small frequent inserts.
+clickhouse.workspace = true
 config.workspace = true
 hex.workspace = true
 redis.workspace = true

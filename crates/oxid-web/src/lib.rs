@@ -5,6 +5,7 @@
 //! `redundant_pub_crate` rejects `pub(crate)`, and the two cannot both be
 //! satisfied. A library gives the items a genuine external path.
 
+pub mod account;
 pub mod api;
 pub mod app;
 pub mod i18n;

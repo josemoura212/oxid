@@ -26,7 +26,7 @@ pub(super) async fn resolve(
     let id = codec::resolve(&code).ok_or(AppError::NotFound)?;
     let id = i64::try_from(id).map_err(|_| AppError::NotFound)?;
 
-    let Some(long_url) = repo::get_url(&state.db_pool, id).await? else {
+    let Some(long_url) = repo::resolve_code(&state.db_pool, id).await? else {
         // Cache the absence too, otherwise every request for a nonexistent code
         // reaches Postgres — a free denial-of-service vector.
         state.cache.set_missing(&code).await;

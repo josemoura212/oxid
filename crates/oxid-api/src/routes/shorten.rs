@@ -7,7 +7,7 @@ use axum::{
 use oxid_shared::{MAX_URL_LEN, ShortenRequest, ShortenResponse};
 use url::Url;
 
-use crate::{codec, error::AppError, repo, state::AppState};
+use crate::{auth::MaybeSession, codec, error::AppError, repo, state::AppState};
 
 /// Parsing alone is not enough: `javascript:alert(1)` and `file:///etc/passwd`
 /// are syntactically valid URLs. Without pinning the scheme, the shortener
@@ -44,6 +44,10 @@ fn validate(raw: &str) -> Result<Url, AppError> {
 
 pub(super) async fn shorten(
     State(state): State<Arc<AppState>>,
+    // `MaybeSession`, never `Session`: shortening without an account is the
+    // default path and stays that way. The session only decides who the code
+    // belongs to.
+    MaybeSession(owner_id): MaybeSession,
     payload: Result<Json<ShortenRequest>, JsonRejection>,
 ) -> Result<Json<ShortenResponse>, AppError> {
     // Taking the rejection as a value, instead of letting the extractor answer on
@@ -56,8 +60,14 @@ pub(super) async fn shorten(
     // `https://a.com/` hash to one row instead of two.
     let long_url = url.as_str();
 
-    let id = repo::insert_url(&state.db_pool, long_url).await?;
-    let id = u64::try_from(id).map_err(|_| AppError::Internal("row id is negative"))?;
+    // Two steps, no transaction. If the first commits and the second fails, the
+    // leftover is a URL with no code — invisible, harmless, and reused by the
+    // next attempt. A transaction would cost more on the write path to prevent
+    // litter that costs nothing.
+    let url_id = repo::upsert_url(&state.db_pool, long_url).await?;
+    let code_id = repo::upsert_code(&state.db_pool, url_id, owner_id).await?;
+
+    let id = u64::try_from(code_id).map_err(|_| AppError::Internal("row id is negative"))?;
     let code =
         codec::shortcode(id).ok_or(AppError::Internal("row id outside the shortcode domain"))?;
 

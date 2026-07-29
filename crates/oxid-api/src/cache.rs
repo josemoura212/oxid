@@ -36,17 +36,25 @@ impl std::fmt::Debug for Cache {
     }
 }
 
-impl Cache {
-    pub async fn connect(settings: &CacheSettings) -> Result<Self, redis::RedisError> {
-        let client = Client::open(settings.url())?;
-        let config = redis::aio::ConnectionManagerConfig::new()
-            .set_connection_timeout(Some(settings.connect_timeout()));
-        let conn = ConnectionManager::new_with_config(client, config).await?;
+/// Opens the one connection everything Redis-backed shares.
+///
+/// `ConnectionManager` multiplexes and is cheap to clone, so the cache and the
+/// session store take a handle to the same connection rather than opening two.
+/// Separate connections would double the socket count for no isolation — a
+/// failure takes both down either way.
+pub async fn connect(settings: &CacheSettings) -> Result<ConnectionManager, redis::RedisError> {
+    let client = Client::open(settings.url())?;
+    let config = redis::aio::ConnectionManagerConfig::new()
+        .set_connection_timeout(Some(settings.connect_timeout()));
+    ConnectionManager::new_with_config(client, config).await
+}
 
-        Ok(Self {
+impl Cache {
+    pub const fn new(conn: ConnectionManager, negative_ttl_seconds: u64) -> Self {
+        Self {
             conn: Some(conn),
-            negative_ttl_seconds: settings.negative_ttl_seconds,
-        })
+            negative_ttl_seconds,
+        }
     }
 
     /// A cache that stores nothing and knows nothing.
@@ -55,6 +63,13 @@ impl Cache {
             conn: None,
             negative_ttl_seconds: 0,
         }
+    }
+
+    /// Reads survive Redis being down; sessions cannot. Handing the connection
+    /// out lets the session store share it while keeping the two concerns in
+    /// separate types — they disagree about what a failure means.
+    pub fn connection(&self) -> Option<ConnectionManager> {
+        self.conn.clone()
     }
 
     /// Redis being down must not take reads down with it. Every failure here is

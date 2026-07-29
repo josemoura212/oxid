@@ -29,7 +29,9 @@ fn settings() -> CacheSettings {
 }
 
 async fn cache() -> Cache {
-    Cache::connect(&settings()).await.unwrap()
+    let settings = settings();
+    let conn = oxid::cache::connect(&settings).await.unwrap();
+    Cache::new(conn, settings.negative_ttl_seconds)
 }
 
 /// Talks to Redis directly, to assert on what the cache actually wrote.

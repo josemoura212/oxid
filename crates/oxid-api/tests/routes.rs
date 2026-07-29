@@ -14,13 +14,27 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use http_body_util::BodyExt;
-use oxid::{cache::Cache, configuration::RateLimitSettings, routes, state::AppState};
+use oxid::{
+    auth::{
+        password::{Decoy, Hasher},
+        session::SessionStore,
+    },
+    cache::Cache,
+    configuration::RateLimitSettings,
+    routes,
+    state::AppState,
+};
 use oxid_shared::{MAX_URL_LEN, PROBLEM_JSON, ProblemDetails, ShortenResponse};
 use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 const BASE_URL: &str = "https://oxid.test";
+
+/// Room to spare, and no waiting. These tests are not about the hashing cap;
+/// a tight one here would only give them a way to fail for the wrong reason.
+const HASH_CONCURRENCY: usize = 8;
+const HASH_WAIT_MS: u64 = 5_000;
 
 /// Cache disabled on purpose: these tests assert routing and status codes, and a
 /// shared Redis would make them order-dependent. Caching has its own suite.
@@ -32,7 +46,17 @@ fn app(pool: PgPool) -> Router {
     let state = Arc::new(AppState {
         db_pool: pool,
         cache: Cache::disabled(),
+        // No Redis here, so nobody can be signed in — which is what these tests
+        // want: they cover the anonymous surface.
+        sessions: SessionStore::disabled(),
         base_url: BASE_URL.to_owned(),
+        hasher: Hasher::new(
+            HASH_CONCURRENCY,
+            std::time::Duration::from_millis(HASH_WAIT_MS),
+            Decoy::generate().unwrap(),
+        ),
+        secure_cookies: true,
+        session_ttl_seconds: 3600,
     });
 
     routes::router(state, permissive_rate_limit()).unwrap()
@@ -42,6 +66,10 @@ const fn permissive_rate_limit() -> RateLimitSettings {
     RateLimitSettings {
         shorten_per_second: 1_000,
         shorten_burst: 10_000,
+        login_per_second: 1_000,
+        login_burst: 10_000,
+        hash_concurrency: HASH_CONCURRENCY,
+        hash_wait_ms: HASH_WAIT_MS,
     }
 }
 
@@ -273,13 +301,30 @@ async fn shorten_is_rate_limited_and_the_redirect_is_not(pool: PgPool) {
     let state = Arc::new(AppState {
         db_pool: pool,
         cache: Cache::disabled(),
+        // No Redis here, so nobody can be signed in — which is what these tests
+        // want: they cover the anonymous surface.
+        sessions: SessionStore::disabled(),
         base_url: BASE_URL.to_owned(),
+        hasher: Hasher::new(
+            HASH_CONCURRENCY,
+            std::time::Duration::from_millis(HASH_WAIT_MS),
+            Decoy::generate().unwrap(),
+        ),
+        secure_cookies: true,
+        session_ttl_seconds: 3600,
     });
     let app = routes::router(
         state,
         RateLimitSettings {
             shorten_per_second: 1,
             shorten_burst: 2,
+            // Left permissive: this test is about the write limit, and a tight
+            // login limit here would only add a way for it to fail for the
+            // wrong reason.
+            login_per_second: 1_000,
+            login_burst: 10_000,
+            hash_concurrency: HASH_CONCURRENCY,
+            hash_wait_ms: HASH_WAIT_MS,
         },
     )
     .unwrap();

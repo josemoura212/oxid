@@ -20,9 +20,23 @@ publish = false
 oxid-shared = { path = "crates/oxid-shared" }
 
 anyhow = "1.0.104"
+# Password hashing is meant to be slow — that is the defence. It also means every
+# verification spends real CPU (~19 MiB and tens of milliseconds at the parameters
+# in `auth::password`), which is why hashing runs off the runtime, under a
+# concurrency cap, behind its own rate limit.
+#
+# The `rand` feature carries the OS random source used for salts and session ids,
+# so there is no separate rand dependency — and no chance of two incompatible
+# rand_core versions ending up in the tree.
+argon2 = { version = "0.5.3", features = ["std", "rand"] }
 axum = "0.8.9"
+axum-extra = { version = "0.12.6", features = ["cookie"] }
+hex = "0.4.3"
+# The cookie crate expresses Max-Age with this; using anything else would mean
+# converting at every call site.
+time = "0.3.44"
 config = { version = "0.15.25", default-features = false, features = ["yaml"] }
-redis = { version = "1.4.1", default-features = false, features = [
+redis = { version = "1.5.0", default-features = false, features = [
     "tokio-comp",
     "tokio-rustls-comp",
     "connection-manager",

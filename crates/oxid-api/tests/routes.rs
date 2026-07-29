@@ -468,6 +468,9 @@ async fn a_form_encoded_login_is_refused(pool: PgPool) {
         .method("POST")
         .uri("/v1/login")
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        // The rate limiter keys on this; without it the request 500s at the
+        // limiter before reaching the content-type check this test is about.
+        .header("x-forwarded-for", CLIENT_IP)
         .body(Body::from("email=a@b.co&password=hunter2hunter2"))
         .unwrap();
 
@@ -502,6 +505,9 @@ async fn the_account_routes_refuse_an_anonymous_caller(pool: PgPool) {
         .method("POST")
         .uri("/v1/urls/import")
         .header(header::CONTENT_TYPE, "application/json")
+        // Import is rate limited, so it needs the key header to get past the
+        // limiter and reach the session check this asserts.
+        .header("x-forwarded-for", CLIENT_IP)
         .body(Body::from(json!({ "urls": [] }).to_string()))
         .unwrap();
     let response = app.oneshot(import).await.unwrap();
@@ -519,6 +525,9 @@ fn post_json(path: &str, body: &serde_json::Value) -> Request<Body> {
         .method("POST")
         .uri(path)
         .header(header::CONTENT_TYPE, "application/json")
+        // Signup is rate limited; the key header keeps the limiter from 500ing
+        // before the validation these tests check.
+        .header("x-forwarded-for", CLIENT_IP)
         .body(Body::from(body.to_string()))
         .unwrap()
 }

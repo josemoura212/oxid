@@ -85,6 +85,7 @@ fn post(path: &str, body: &serde_json::Value) -> Request<Body> {
         .method("POST")
         .uri(path)
         .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", CLIENT_IP)
         .body(Body::from(body.to_string()))
         .unwrap()
 }
@@ -94,6 +95,7 @@ fn post_with_cookie(path: &str, body: &serde_json::Value, cookie: &str) -> Reque
         .method("POST")
         .uri(path)
         .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", CLIENT_IP)
         .header(header::COOKIE, cookie)
         .body(Body::from(body.to_string()))
         .unwrap()
@@ -127,6 +129,12 @@ async fn body_json<T: serde::de::DeserializeOwned>(response: axum::response::Res
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
 }
+
+/// The rate limiter on signup/login keys on the client IP via X-Forwarded-For.
+/// `oneshot` has no socket, so without this header `SmartIpKeyExtractor` finds no
+/// key and the layer answers 500 before the handler ever runs — the same header
+/// Traefik sets in front of the real service.
+const CLIENT_IP: &str = "203.0.113.42";
 
 const EMAIL: &str = "ana@example.com";
 const PASSWORD: &str = "a-long-enough-password";

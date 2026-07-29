@@ -438,6 +438,8 @@ e as Etapas 9-10 medem melhor um sistema sem sessão no caminho.
 - [x] Rate limit próprio nas rotas caras, separado do de `shorten`
 - [x] **Extra:** hashagem fora do runtime e sob teto de concorrência — ver abaixo
 - [x] **Extra:** front com diálogo de conta, lista da conta e importação no cadastro
+- [x] **Extra:** `POST /v1/logout-all` — "sair de todos os dispositivos", ver abaixo
+- [x] **Extra:** testes de CORS/CSRF travando a proteção emergente, ver abaixo
 - [ ] Fechar a enumeração de contas no `signup` — precisa de e-mail, ver abaixo
 
 🎯 ✅ Duas contas encurtando a mesma URL recebem **códigos diferentes** apontando para a
@@ -489,6 +491,26 @@ em volta da hashagem limita o Argon2 em voo independentemente de quem chama: uma
 vira fila, e além do teto a resposta é 503 com `Retry-After`. O caminho do decoy também
 consome slot — isentá-lo daria a volta no teto usando só e-mails inexistentes, que é o
 caminho mais barato de descobrir.
+
+**"Sair de todos os dispositivos" (2026-07-29), a partir da auditoria.** O `SessionStore`
+só tinha `s:<id> → user_id` — busca em um sentido só, sem como listar as sessões de um
+usuário. Isso tornava impossível revogar tudo num incidente de conta comprometida. A
+correção é um índice reverso: ao criar uma sessão, ela também entra num conjunto
+`u:<user_id>`; o `revoke_all` lê o conjunto, apaga cada `s:<id>` e por fim o próprio
+conjunto. `POST /v1/logout-all` exige sessão válida (só revoga as próprias) e, ao contrário
+do `logout` comum, **não engole falha** — quem clica está reagindo a um comprometimento, e
+dizer "saiu" quando a revogação falhou seria a pior mentira. Namespace configurável no
+store para os testes ficarem isolados no Redis compartilhado.
+
+**CORS/CSRF era proteção emergente; virou proteção testada (2026-07-29).** Não há token
+CSRF nem `CorsLayer`, e isso é a postura segura, não uma lacuna: sem CORS é mesma-origem
+apenas, e as rotas de mutação exigem `Json<T>`, que um `<form>` cross-site não produz. O
+risco era isso sumir no dia que alguém adicionasse um `CorsLayer` permissivo sem refazer o
+raciocínio. Agora o CI é dono dessa garantia: testes que falham se um preflight cross-origin
+receber `allow-origin`, se um POST `form-urlencoded` numa rota de mutação for aceito, ou se o
+cookie de sessão perder `HttpOnly`/`Secure`/`SameSite=Lax`. Quando o CORS finalmente for
+preciso (a extensão da Etapa 13), tem de ser **escopado**, nunca permissivo — e o teste
+obriga a decisão a ser consciente.
 
 **Pendência — o `signup` entrega a enumeração que o `login` protege.** O login responde
 igual nos dois casos, com o mesmo `type` e o mesmo custo de CPU. O signup responde 409

@@ -68,6 +68,10 @@ pub fn router(state: Arc<AppState>, rate_limit: RateLimitSettings) -> anyhow::Re
             post(accounts::login).layer(expensive_limit.clone()),
         )
         .route("/v1/logout", post(accounts::logout))
+        // "Sign out everywhere" — revokes every session the caller has, for after
+        // a suspected compromise. Needs a valid session: you can only revoke your
+        // own.
+        .route("/v1/logout-all", post(accounts::logout_all))
         .route("/v1/me", get(accounts::me))
         .route("/v1/session", get(accounts::session_state))
         .route("/v1/urls", get(urls::list))

@@ -187,6 +187,33 @@ pub(super) async fn logout(
         .into_response())
 }
 
+/// Signs the caller out of every device by revoking all their sessions.
+///
+/// Requires a valid session — you can only nuke your own. Clears this browser's
+/// cookie too, since the session it points at is among the ones just revoked.
+///
+/// Unlike `logout`, a storage failure here is surfaced as 500 rather than
+/// swallowed: someone reaching for "sign out everywhere" is usually responding
+/// to a compromise, and a silent partial revoke would tell them they are safe
+/// when they are not.
+pub(super) async fn logout_all(
+    State(state): State<Arc<AppState>>,
+    jar: CookieJar,
+    session: Session,
+) -> Result<Response, AppError> {
+    state
+        .sessions
+        .revoke_all(session.user_id)
+        .await
+        .map_err(|_| AppError::Internal("failed to revoke sessions"))?;
+
+    Ok((
+        jar.add(expired_cookie(state.secure_cookies)),
+        axum::http::StatusCode::NO_CONTENT,
+    )
+        .into_response())
+}
+
 pub(super) async fn me(
     State(state): State<Arc<AppState>>,
     session: Session,

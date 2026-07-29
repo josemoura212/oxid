@@ -387,3 +387,169 @@ async fn errors_follow_rfc_9457(pool: PgPool) {
     assert_eq!(problem.status, 400);
     assert!(problem.detail.is_some());
 }
+
+// --- CSRF / CORS ---
+//
+// There is no CSRF token and no CORS layer, and that is the safe posture rather
+// than a gap: no CORS means same-origin only, and the mutation routes take
+// `Json<T>`, which a cross-site `<form>` cannot produce. The danger is that the
+// protection is emergent — it disappears the day someone adds a permissive
+// `CorsLayer` for a mobile app or a partner integration without re-deriving this
+// reasoning. These tests turn that reasoning into something the CI owns: each one
+// fails loudly if the posture is loosened.
+
+fn preflight(path: &str) -> Request<Body> {
+    Request::builder()
+        .method("OPTIONS")
+        .uri(path)
+        .header("origin", "https://evil.example")
+        .header("access-control-request-method", "POST")
+        .header("access-control-request-headers", "content-type")
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// A permissive `CorsLayer` would answer a preflight with
+/// `access-control-allow-origin`. Its absence is what keeps a browser from
+/// letting another site read authenticated responses — assert it stays absent.
+#[sqlx::test(migrations = "../../migrations")]
+async fn no_cors_headers_are_emitted_on_a_preflight(pool: PgPool) {
+    let app = app(pool);
+
+    for path in ["/v1/login", "/v1/signup", "/v1/urls", "/v1/urls/import"] {
+        let response = app.clone().oneshot(preflight(path)).await.unwrap();
+
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "{path} answered a cross-origin preflight with an allow-origin header"
+        );
+    }
+}
+
+/// Even a simple cross-origin request must not come back with an allow-origin
+/// header, or its response body becomes readable by the calling site.
+#[sqlx::test(migrations = "../../migrations")]
+async fn no_cors_headers_on_a_simple_cross_origin_request(pool: PgPool) {
+    let app = app(pool);
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/login")
+        .header("origin", "https://evil.example")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "email": "a@b.co", "password": "x" }).to_string(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none(),
+        "a cross-origin POST came back with an allow-origin header"
+    );
+}
+
+/// The other half of the CSRF story: a cross-site auto-submitting form can only
+/// send `application/x-www-form-urlencoded`, `multipart/form-data` or
+/// `text/plain`. The `Json` extractor rejects all three, so even with the cookie
+/// attached the request never reaches the handler's logic.
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_form_encoded_login_is_refused(pool: PgPool) {
+    let app = app(pool);
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/login")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from("email=a@b.co&password=hunter2hunter2"))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    // Rejected before any credential check — a client error, never a 200 that
+    // would mean the form drove a login, nor a 500.
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+// --- the authenticated surface, without a session ---
+//
+// `Session` rejects with 401 when there is no valid cookie. These lock that the
+// right routes demand it — a regression that swapped `Session` for `MaybeSession`
+// on any of them would open the account surface to anonymous callers.
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_account_routes_refuse_an_anonymous_caller(pool: PgPool) {
+    let app = app(pool);
+
+    for path in ["/v1/me", "/v1/urls"] {
+        let request = Request::builder().uri(path).body(Body::empty()).unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{path} served an anonymous caller"
+        );
+    }
+
+    let import = Request::builder()
+        .method("POST")
+        .uri("/v1/urls/import")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "urls": [] }).to_string()))
+        .unwrap();
+    let response = app.oneshot(import).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+// --- signup validation ---
+//
+// These run without Redis, so they only reach the validation that happens before
+// a session is created — which is exactly the surface being tested. The full
+// signup/login/logout flow lives in `tests/auth.rs`, against a real Redis.
+
+fn post_json(path: &str, body: &serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn signup_rejects_a_malformed_email(pool: PgPool) {
+    let app = app(pool);
+
+    for email in ["not-an-email", "no@dot", "@nolocal.com", "has space@x.com"] {
+        let request = post_json(
+            "/v1/signup",
+            &json!({ "email": email, "password": "a-long-enough-password" }),
+        );
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "accepted malformed email {email:?}"
+        );
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn signup_rejects_a_short_password(pool: PgPool) {
+    let app = app(pool);
+
+    let request = post_json(
+        "/v1/signup",
+        &json!({ "email": "ok@example.com", "password": "short" }),
+    );
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}

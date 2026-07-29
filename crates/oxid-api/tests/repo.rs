@@ -19,8 +19,13 @@ async fn shorten_anon(pool: &PgPool, url: &str) -> Result<i64, sqlx::Error> {
     repo::upsert_code(pool, url_id, None).await
 }
 
+/// Deliberately not shaped like a PHC string. These tests never verify a
+/// password, so the column only has to hold something — and anything starting
+/// with `$argon2id$` trips secret scanners on every commit for no reason.
+const STORED_HASH_PLACEHOLDER: &str = "not-a-real-hash";
+
 async fn make_user(pool: &PgPool, email: &str) -> Result<Option<i64>, sqlx::Error> {
-    repo::create_user(pool, email, "$argon2id$fake").await
+    repo::create_user(pool, email, STORED_HASH_PLACEHOLDER).await
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -247,7 +252,7 @@ async fn an_owner_never_sees_another_owners_links(pool: PgPool) {
 async fn duplicate_email_is_refused(pool: PgPool) {
     make_user(&pool, "ana@example.com").await.unwrap().unwrap();
 
-    let again = repo::create_user(&pool, "ana@example.com", "$argon2id$fake")
+    let again = repo::create_user(&pool, "ana@example.com", STORED_HASH_PLACEHOLDER)
         .await
         .unwrap();
 
@@ -260,7 +265,7 @@ async fn duplicate_email_is_refused(pool: PgPool) {
 async fn email_uniqueness_ignores_case(pool: PgPool) {
     make_user(&pool, "ana@example.com").await.unwrap().unwrap();
 
-    let again = repo::create_user(&pool, "ANA@Example.COM", "$argon2id$fake")
+    let again = repo::create_user(&pool, "ANA@Example.COM", STORED_HASH_PLACEHOLDER)
         .await
         .unwrap();
 

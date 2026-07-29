@@ -16,6 +16,7 @@ oxid-shared.workspace = true
 console_error_panic_hook.workspace = true
 gloo-net.workspace = true
 gloo-storage.workspace = true
+js-sys.workspace = true
 leptos = { workspace = true, features = ["csr"] }
 serde.workspace = true
 web-sys.workspace = true

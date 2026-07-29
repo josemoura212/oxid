@@ -86,7 +86,16 @@ pub async fn me() -> Result<AccountResponse, String> {
 
 pub async fn owned_links(cursor: Option<&str>) -> Result<LinkPage, String> {
     match cursor {
-        Some(cursor) => get(&format!("/v1/urls?cursor={cursor}")).await,
+        // The cursor is opaque and server-produced: `<rfc3339>|<code>`. An RFC
+        // 3339 UTC timestamp ends in `+00:00`, and a raw `+` in a query string
+        // decodes back to a space — so without encoding, `parse_cursor` on the
+        // server sees a broken timestamp and every page after the first is a
+        // 400. `encodeURIComponent` is the browser's own encoder; a hand-rolled
+        // one would need updating the day the cursor format changes.
+        Some(cursor) => {
+            let encoded = String::from(js_sys::encode_uri_component(cursor));
+            get(&format!("/v1/urls?cursor={encoded}")).await
+        }
         None => get("/v1/urls").await,
     }
 }

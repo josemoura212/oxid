@@ -43,6 +43,11 @@ redis = { version = "1.5.0", default-features = false, features = [
 ] }
 console_error_panic_hook = "0.1.7"
 gloo-net = { version = "0.7.0", features = ["http"] }
+# Already in the tree via web-sys; taken as a direct dependency for
+# `encode_uri_component` — the browser's own query encoder, used so an opaque
+# cursor survives the query string instead of a hand-rolled escaper that breaks
+# the day the cursor format changes.
+js-sys = "0.3.83"
 gloo-storage = "0.4.0"
 # web-sys gates every browser API behind its own feature, and the default set is
 # empty on purpose. Clipboard for the copy button; Document and Element to keep

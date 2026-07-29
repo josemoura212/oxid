@@ -432,12 +432,36 @@ pub fn AccountDialog(
 pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
     let more = Action::new_local(move |(): &()| async move { account.load_more().await });
 
+    // Signs out everywhere, then drops this browser to the anonymous state — the
+    // cookie it held was among the sessions just revoked, so there is nothing
+    // left to keep.
+    let sign_out_all = Action::new_local(move |(): &()| async move {
+        match api::logout_all().await {
+            Ok(()) => {
+                account.user.set(Some(None));
+                account.links.set(Vec::new());
+                account.cursor.set(None);
+                account.imported.set(false);
+            }
+            Err(error) => leptos::logging::warn!("sign out everywhere failed: {error}"),
+        }
+    });
+
     view! {
         <section class="vault">
             <div class="vault-head">
                 <h2 class="vault-title">
                     {move || locale.get().strings().vault_account_title}
                 </h2>
+                <button
+                    class="dialog-switch"
+                    type="button"
+                    on:click=move |_| {
+                        sign_out_all.dispatch(());
+                    }
+                >
+                    {move || locale.get().strings().sign_out_all}
+                </button>
             </div>
 
             <Show when=move || account.imported.get()>

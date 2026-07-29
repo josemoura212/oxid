@@ -72,6 +72,24 @@ pub async fn logout() -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Signs out of every device by revoking all of the account's sessions.
+///
+/// Unlike `logout`, the server surfaces a failure here (500), so this reads the
+/// status: telling someone reacting to a compromise that they are signed out
+/// everywhere when a revoke failed would be the worst possible lie.
+pub async fn logout_all() -> Result<(), String> {
+    let response = Request::post("/v1/logout-all")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if response.ok() {
+        Ok(())
+    } else {
+        Err(format!("{} {}", response.status(), response.status_text()))
+    }
+}
+
 /// Who is signed in, or nobody.
 ///
 /// Separate from `/v1/me` so first paint does not have to treat a 401 as an

@@ -140,6 +140,7 @@ pub struct Strings {
     // Accounts.
     pub sign_in: &'static str,
     pub sign_out: &'static str,
+    pub sign_out_all: &'static str,
     pub sign_up: &'static str,
     pub email_label: &'static str,
     pub password_label: &'static str,
@@ -184,6 +185,7 @@ static EN: Strings = Strings {
 
     sign_in: "Sign in",
     sign_out: "Sign out",
+    sign_out_all: "Sign out of all devices",
     sign_up: "Create account",
     email_label: "Email",
     password_label: "Password",
@@ -225,6 +227,7 @@ static PT_BR: Strings = Strings {
 
     sign_in: "Entrar",
     sign_out: "Sair",
+    sign_out_all: "Sair de todos os dispositivos",
     sign_up: "Criar conta",
     email_label: "E-mail",
     password_label: "Senha",

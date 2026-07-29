@@ -356,15 +356,58 @@ disputado. Medir o custo dele **durante** o teste, não só depois.
 
 ## Etapa 9 — Teste de carga com k6
 
-- [ ] `infra/k6/load.js`: executor `ramping-arrival-rate`, rampa de 30s,
+- [x] `infra/k6/load.js`: executor `ramping-arrival-rate`, rampa de 30s,
       proporção 1:10 escrita/leitura, pool de URLs pré-criadas para as leituras
-- [ ] Thresholds no script: p95 alvo e taxa de erro 0
-- [ ] Checklist de validade do teste: gerador com folga de CPU, `dropped_iterations = 0`,
-      app em `--release`
-- [ ] Rodar em escala 0.5 primeiro (≈ 5.800 leituras/s + 580 escritas/s)
+- [x] Thresholds no script: p95 alvo, taxa de erro 0 e `dropped_iterations = 0`
+- [x] Checklist de validade do teste em `infra/k6/README.md`
+- [x] Rodar em escala 0.5 — e depois varrer para baixo, porque ela satura
 
-🎯 Relatório da escala 0.5 com percentis limpos e zero erros — ou gargalos
-   identificados com telemetria dos dois lados (cliente E servidor).
+🎯 ✅ **Pelas duas vias.** Há um run com percentis limpos e zero erros — numa escala
+   menor que a pedida — e o gargalo da escala 0.5 está identificado com telemetria dos
+   dois lados. O gargalo é CPU: não é banco (pool ocioso), não é cache (100% de hit),
+   não é rede (os dois lados convergem sob carga). Números em `docs/ETAPA-9-CARGA.md`.
+
+**A escala 0.5 não passa, e varrer para baixo é que deu o número útil.** O critério
+pedia a escala 0.5; ela satura. O que fecha a etapa é a maior escala com percentis
+limpos, encontrada descendo até o run em que `dropped_iterations` zera e o p95 entra na
+meta. "Falhou na escala pedida" e "não se sabe a capacidade" são coisas diferentes, e só
+a varredura separa as duas.
+
+**O joelho é estreito, e é a assinatura de fila.** Entre a maior escala limpa e a
+seguinte, o p95 saltou quase 5x para 1,5x de carga. Não é degradação suave: é uma fila
+cruzando o ponto de saturação. Perto do joelho, portanto, capacidade extra compra muito
+pouca latência — e é por isso que a Etapa 10 tem de atacar o recurso saturado, não
+espremer configuração.
+
+**Zero erros em toda escala testada.** Nenhum 5xx, nenhuma conexão recusada, nem na
+escala que saturou o nó. O serviço não quebra sob carga — ele enfileira, e a latência
+sobe. Vale registrar porque era um requisito do projeto ("zero erros sob carga de
+pico") e ele passou mesmo onde a latência não passou.
+
+**O seed já respondeu a pergunta da escrita.** Criar o pool de leitura é, ele próprio,
+um teste de escrita — e sustentou acima da meta da escala 1.0, com zero falhas, antes
+de o teste formal começar. Quando um passo preparatório mede algo, vale ler o número.
+
+**A rede deixou de importar exatamente quando passou a haver fila.** Medindo de fora
+do datacentre, em carga baixa o RTT era quase toda a latência; sob saturação, a fila do
+servidor domina tanto que a rede vira ruído. A consequência prática é boa: **não é
+preciso um gerador dentro do datacentre para achar o joelho** — a diferença entre os
+dois lados encolhe justamente na região que interessa.
+
+**A convergência dos dois lados é o que torna o run defensável.** A telemetria do
+servidor não depende do gerador. Quando ela confirma o cliente, um `dropped_iterations`
+diferente de zero deixa de invalidar a conclusão — mede-se o erro do gerador, não o do
+alvo. Sem os dois lados, o run inteiro seria descartável pelo próprio checklist.
+
+**O erro de método que este teste cometeu, e que vale evitar:** dimensionar os VUs do
+gerador exige conhecer a latência, que é justamente o que o teste vai descobrir. A
+estimativa inicial errou por 4x, o pool de VUs estourou e as iterações começaram a ser
+descartadas. A saída é iterar — rodar, ler a latência, redimensionar — ou pré-alocar com
+folga larga desde o começo. É a lei de Little de novo, a mesma do pool de conexões.
+
+**Distribuição diz o tipo de problema, média não diz nada.** Mediana baixa com p95 alto
+é fila **intermitente**; um serviço uniformemente lento teria a mediana alta também. Ler
+o par mediana/p95 antes de formular qualquer hipótese economiza uma iteração inteira.
 
 ## Etapa 10 — Ciclo de otimização até escala 1.0
 

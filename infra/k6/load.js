@@ -42,6 +42,12 @@ const redirectOk = new Rate('redirect_ok')
 const EXPECTED_MS = Number(__ENV.EXPECTED_MS || 40)
 const HEADROOM = 4
 
+// Pre-allocated with slack rather than at the computed figure. Growing the VU
+// pool is not instantaneous, and an arrival-rate executor that finds no free VU
+// drops the iteration instead of delaying it — which fails the dropped_iterations
+// threshold on startup alone, while the steady state would have been fine.
+const PREALLOC_SLACK = 3
+
 function vusFor(rate) {
   return Math.max(8, Math.ceil((rate * EXPECTED_MS) / 1000))
 }
@@ -76,7 +82,7 @@ export const options = {
         { target: reads, duration: '30s' },
         { target: reads, duration: DURATION },
       ],
-      preAllocatedVUs: vusFor(reads),
+      preAllocatedVUs: vusFor(reads) * PREALLOC_SLACK,
       maxVUs: vusFor(reads) * HEADROOM,
     },
     writes: {
@@ -88,7 +94,7 @@ export const options = {
         { target: writes, duration: '30s' },
         { target: writes, duration: DURATION },
       ],
-      preAllocatedVUs: vusFor(writes),
+      preAllocatedVUs: vusFor(writes) * PREALLOC_SLACK,
       maxVUs: vusFor(writes) * HEADROOM,
     },
   },

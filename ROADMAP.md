@@ -676,6 +676,37 @@ dela mediria a CDN. Com tudo fechado, o gerador de carga teria que rodar dentro
 da VPS, disputando CPU com o alvo. É o erro que o estudo original cometeu e que
 este projeto existe para não repetir.
 
+## Pendência de segurança — o rate limit não segura pelo caminho público
+
+Descoberto em 2026-07-29, ao verificar a reversão do build da Etapa 9. Mesma
+imagem, mesmo momento, 60 requisições simultâneas ao `POST /v1/shorten`:
+
+| Caminho | Resultado |
+|---|---|
+| Direto no serviço, sem CDN nem proxy | 40 × `200`, **20 × `429`** |
+| Pelo caminho público, com CDN e proxy | **60 × `200`** |
+
+O limite funciona; ele só não vê o cliente. A suspeita já estava anotada desde o
+deploy — "com CDN e proxy o `X-Forwarded-For` chega como cadeia, vale conferir que
+o primeiro é mesmo o do cliente" — e agora tem número.
+
+- [ ] Confirmar o que o `SmartIpKeyExtractor` está de fato lendo em produção
+- [ ] Fazer o proxy confiar nos ranges da CDN, para preservar o IP de origem
+- [ ] Só então reavaliar `shorten_per_second` e `shorten_burst`, que hoje foram
+      calibrados contra um limite que nunca chegou a atuar
+
+**Por que passa despercebido:** o teste ingênuo não distingue os dois casos. Trinta
+requisições sequenciais a ~150 ms cada levam quatro segundos e meio, e a 5/s de
+reposição o balde nunca esvazia — dá `200` nas trinta com ou sem limite. Só carga
+**concorrente** revela. Foi exatamente o erro cometido aqui antes de refazer o teste
+em paralelo.
+
+**A lição que generaliza:** um rate limit por IP atrás de uma CDN só vale se a
+cadeia de proxies preservar o IP de origem e o extrator ler a ponta certa dela. Do
+contrário a chave passa a ser o edge da CDN — que varia por conexão — e cada
+requisição vira um cliente novo. O limite existe, aparece na configuração, e não
+limita nada.
+
 ## Pendência de CI — quem segura um deploy não revisado
 
 **O que foi tentado e revertido:** disparar o deploy em `pull_request` com `types: [closed]`,

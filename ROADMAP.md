@@ -901,6 +901,41 @@ contrário a chave passa a ser o edge da CDN — que varia por conexão — e ca
 requisição vira um cliente novo. O limite existe, aparece na configuração, e não
 limita nada.
 
+## Pendência de configuração — quem carrega o `Settings` inteiro paga por ele
+
+Descoberto em 2026-07-30, no primeiro deploy depois de ligar o analytics. O Job de
+migração morreu em todas as tentativas:
+
+```
+invalid configuration: missing configuration field "analytics.clickhouse.password"
+```
+
+`APP_ANALYTICS__BACKEND` entrou no ConfigMap compartilhado, e o Job o herda por
+`envFrom`. A senha, porém, foi ligada só como env de Secret no Deployment da API.
+O migrador então exigiu um campo que ninguém lhe deu — sendo que ele carrega o
+`Settings` completo e lê **apenas** `settings.database`.
+
+O reparo imediato foi o Job sobrepor as duas chaves (`env` explícito vence
+`envFrom`), com placeholder em vez do Secret real: dar uma credencial de ClickHouse
+a um processo que não a usa só aumenta a área de exposição do Job.
+
+- [ ] Fazer o migrador carregar só a seção de que precisa, para que nenhum binário
+      futuro herde uma exigência que não tem
+- [ ] Reavaliar se `analytics.clickhouse.password` deve continuar obrigatória — hoje
+      a obrigatoriedade é o que faz um Secret ausente falhar alto em vez de degradar
+      em silêncio, e essa parte é desejável
+
+**Por que não deu prejuízo:** o passo de migração roda **antes** do rollout, então a
+falha parou o deploy sem tocar nos Deployments em execução. Produção seguiu nas
+imagens anteriores e nunca caiu. A ordem do workflow é o que transformou um erro de
+configuração em deploy abortado em vez de indisponibilidade.
+
+**A lição que generaliza:** um ConfigMap compartilhado é acoplamento. No momento em
+que uma chave nova passa a ser obrigatória, ela vale para **todo** processo que monta
+aquele ConfigMap — não só para o que a introduziu. Ligar uma feature em um Deployment
+e esquecer o Job que divide a mesma configuração é uma falha que nenhum teste local
+pega, porque local carrega um arquivo de configuração completo.
+
 ## Pendência de CI — quem segura um deploy não revisado
 
 **O que foi tentado e revertido:** disparar o deploy em `pull_request` com `types: [closed]`,

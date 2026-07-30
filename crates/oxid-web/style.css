@@ -565,3 +565,63 @@ body {
 .dialog-close:hover {
   color: var(--fg);
 }
+
+/* Account menu (top bar).
+ *
+ * The hamburger replaces the bare "sign out" button so both sign-out actions —
+ * this device and every device — live in one place instead of one in the bar and
+ * one in the list header.
+ */
+.account-menu {
+  position: relative;
+}
+
+.account-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Catches a click anywhere outside the dropdown to close it, without a global
+   listener. Under the dropdown, over everything else. */
+.menu-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.account-dropdown {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 21;
+  min-width: 14rem;
+  display: flex;
+  flex-direction: column;
+  padding: 0.35rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+  background: var(--page);
+  box-shadow: 0 0.75rem 1.5rem rgb(0 0 0 / 40%);
+}
+
+.menu-item {
+  padding: 0.6rem 0.7rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  background: var(--edge);
+}
+
+.menu-item:focus-visible {
+  outline: 2px solid var(--accent-face);
+  outline-offset: -2px;
+}

@@ -102,18 +102,62 @@ async fn import_saved(account: Account, saved: Vec<SavedLink>) {
     account.reload().await;
 }
 
+/// Three bars, inlined like the GitHub mark — one 16×16 path is cheaper than a
+/// request, and a strict CSP is on the roadmap.
+#[component]
+fn HamburgerIcon() -> impl IntoView {
+    view! {
+        <svg
+            class="icon"
+            viewBox="0 0 16 16"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            aria-hidden="true"
+            focusable="false"
+        >
+            <path d="M2 4h12M2 8h12M2 12h12"></path>
+        </svg>
+    }
+}
+
+/// Drops this browser to the anonymous state after any sign-out — the cookie it
+/// held is gone (revoked, or on its way out), so nothing is left to keep.
+fn to_anonymous(account: Account) {
+    account.user.set(Some(None));
+    account.links.set(Vec::new());
+    account.cursor.set(None);
+    account.imported.set(false);
+}
+
 #[component]
 pub fn AccountButton(
     account: Account,
     locale: Signal<Locale>,
     open: RwSignal<bool>,
 ) -> impl IntoView {
+    // Local to the button, not lifted to `App`: nothing else needs to know the
+    // menu is open, and keeping it here means the veil and the toggle share one
+    // signal without threading it through the tree.
+    let menu_open = RwSignal::new(false);
+
     let sign_out = Action::new_local(move |(): &()| async move {
         let _ = api::logout().await;
-        account.user.set(Some(None));
-        account.links.set(Vec::new());
-        account.cursor.set(None);
-        account.imported.set(false);
+        to_anonymous(account);
+        menu_open.set(false);
+    });
+
+    // Revokes every session, then falls to anonymous like an ordinary sign-out —
+    // this browser's cookie was among the ones just revoked.
+    let sign_out_all = Action::new_local(move |(): &()| async move {
+        match api::logout_all().await {
+            Ok(()) => to_anonymous(account),
+            Err(error) => leptos::logging::warn!("sign out everywhere failed: {error}"),
+        }
+        menu_open.set(false);
     });
 
     view! {
@@ -121,25 +165,58 @@ pub fn AccountButton(
             when=move || account.signed_in()
             fallback=move || {
                 view! {
-                    <button
-                        class="lang"
-                        type="button"
-                        on:click=move |_| open.set(true)
-                    >
+                    <button class="lang" type="button" on:click=move |_| open.set(true)>
                         {move || locale.get().strings().sign_in}
                     </button>
                 }
             }
         >
-            <button
-                class="lang"
-                type="button"
-                on:click=move |_| {
-                    sign_out.dispatch(());
-                }
-            >
-                {move || locale.get().strings().sign_out}
-            </button>
+            <div class="account-menu">
+                <button
+                    class="lang account-menu-toggle"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded=move || if menu_open.get() { "true" } else { "false" }
+                    aria-label=move || locale.get().strings().account_menu
+                    title=move || locale.get().strings().account_menu
+                    on:click=move |_| menu_open.update(|o| *o = !*o)
+                >
+                    <HamburgerIcon />
+                </button>
+
+                <Show when=move || menu_open.get()>
+                    // A full-window veil so a click anywhere outside the menu
+                    // closes it — the plain-CSS equivalent of a click-away
+                    // listener, without reaching for a global event handler.
+                    <div
+                        class="menu-veil"
+                        role="presentation"
+                        on:click=move |_| menu_open.set(false)
+                    ></div>
+                    <div class="account-dropdown" role="menu">
+                        <button
+                            class="menu-item"
+                            type="button"
+                            role="menuitem"
+                            on:click=move |_| {
+                                sign_out.dispatch(());
+                            }
+                        >
+                            {move || locale.get().strings().sign_out}
+                        </button>
+                        <button
+                            class="menu-item"
+                            type="button"
+                            role="menuitem"
+                            on:click=move |_| {
+                                sign_out_all.dispatch(());
+                            }
+                        >
+                            {move || locale.get().strings().sign_out_all}
+                        </button>
+                    </div>
+                </Show>
+            </div>
         </Show>
     }
 }
@@ -432,36 +509,14 @@ pub fn AccountDialog(
 pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
     let more = Action::new_local(move |(): &()| async move { account.load_more().await });
 
-    // Signs out everywhere, then drops this browser to the anonymous state — the
-    // cookie it held was among the sessions just revoked, so there is nothing
-    // left to keep.
-    let sign_out_all = Action::new_local(move |(): &()| async move {
-        match api::logout_all().await {
-            Ok(()) => {
-                account.user.set(Some(None));
-                account.links.set(Vec::new());
-                account.cursor.set(None);
-                account.imported.set(false);
-            }
-            Err(error) => leptos::logging::warn!("sign out everywhere failed: {error}"),
-        }
-    });
-
     view! {
         <section class="vault">
             <div class="vault-head">
+                // Sign out and sign-out-everywhere both live in the top-bar menu
+                // now, so the list header carries only its title.
                 <h2 class="vault-title">
                     {move || locale.get().strings().vault_account_title}
                 </h2>
-                <button
-                    class="dialog-switch"
-                    type="button"
-                    on:click=move |_| {
-                        sign_out_all.dispatch(());
-                    }
-                >
-                    {move || locale.get().strings().sign_out_all}
-                </button>
             </div>
 
             <Show when=move || account.imported.get()>

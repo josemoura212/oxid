@@ -9,6 +9,7 @@ differ.
 | `00-namespace.yaml` | the `oxid` namespace |
 | `10-postgres.yaml` | StatefulSet + headless Service + PVC |
 | `20-redis.yaml` | Deployment + Service, no volume — the cache is disposable |
+| `25-clickhouse.yaml` | StatefulSet + headless Service + PVC + tuning ConfigMap, for click analytics |
 | `30-api.yaml` | API Deployment, ConfigMap and Service |
 | `40-deploy-access.yaml` | ServiceAccount, Role and RoleBinding for CI |
 | `50-migrate-job.yaml` | migration Job, templated on `IMAGE_REF` |
@@ -31,6 +32,18 @@ kubectl apply -f infra/k8s/10-postgres.yaml
 kubectl -n oxid rollout status statefulset/postgres
 
 kubectl apply -f infra/k8s/20-redis.yaml
+
+# The analytics secret, same shape as the database one, never versioned. The API
+# and ClickHouse both read it, so the username and database must match the two
+# plain values in the API ConfigMap (APP_ANALYTICS__CLICKHOUSE__USER / __DATABASE).
+kubectl -n oxid create secret generic oxid-clickhouse \
+  --from-literal=username=oxid \
+  --from-literal=database=oxid \
+  --from-literal=password="$(openssl rand -hex 24)"
+
+kubectl apply -f infra/k8s/25-clickhouse.yaml
+kubectl -n oxid rollout status statefulset/clickhouse
+
 kubectl apply -f infra/k8s/30-api.yaml
 kubectl apply -f infra/k8s/60-web.yaml
 ```

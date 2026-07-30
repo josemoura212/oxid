@@ -1,0 +1,137 @@
+# ClickHouse for click analytics. A StatefulSet for the same reason as Postgres:
+# a stable identity and a volume that survives rescheduling, never two pods on
+# one data directory.
+#
+# It is off the redirect's hot path — the API degrades to a disabled sink if this
+# is unreachable and keeps serving — so a hiccup here never takes the product
+# down. What it can do is fight the rest of the node for RAM, which is why the
+# ceiling below is explicit.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-tuning
+  namespace: oxid
+data:
+  # ClickHouse sizes its caches to the machine it thinks it owns. On a 2-vCPU,
+  # 12 GB node already running Postgres, Redis, two API replicas and the front
+  # end, that default is how it starts starving them. 25.3 reads the cgroup limit
+  # for max_server_memory_usage, so the ratio caps query memory to ~0.7 of the
+  # 2Gi limit below; the rest trims the caches a small analytics workload with a
+  # 30-day TTL never needs large.
+  low-memory.xml: |
+    <clickhouse>
+        <max_server_memory_usage_to_ram_ratio>0.7</max_server_memory_usage_to_ram_ratio>
+        <mark_cache_size>536870912</mark_cache_size>
+        <uncompressed_cache_size>0</uncompressed_cache_size>
+    </clickhouse>
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: oxid
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      securityContext:
+        # The image runs as uid 101 (clickhouse); the volume must be writable by
+        # its group after a rescheduling remounts it.
+        fsGroup: 101
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.3-alpine
+
+          env:
+            - name: CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef: { name: oxid-clickhouse, key: username }
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: oxid-clickhouse, key: password }
+            - name: CLICKHOUSE_DB
+              valueFrom:
+                secretKeyRef: { name: oxid-clickhouse, key: database }
+            # Without this the built-in default user answers with no password from
+            # anywhere; turning it on makes the named user the only way in.
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
+
+          ports:
+            # 8123 is the HTTP interface the `clickhouse` crate talks to. 9000 is
+            # the native protocol, kept for `clickhouse-client` debugging only —
+            # the app never uses it, and neither port leaves the cluster.
+            - containerPort: 8123
+              name: http
+            - containerPort: 9000
+              name: native
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: tuning
+              mountPath: /etc/clickhouse-server/config.d/low-memory.xml
+              subPath: low-memory.xml
+
+          # 127.0.0.1, not localhost: localhost resolves to ::1 and ClickHouse
+          # binds IPv4 only by default, so the probe would get connection-refused
+          # and the pod would never go ready.
+          readinessProbe:
+            exec:
+              command: ["wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+          livenessProbe:
+            exec:
+              command: ["wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+
+          # The hard ceiling the comment above is about. The request is modest so
+          # the scheduler still fits it next to everything else; the limit is what
+          # keeps a runaway query from taking the node with it.
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { memory: 2Gi }
+
+      volumes:
+        - name: tuning
+          configMap:
+            name: clickhouse-tuning
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: oxid
+spec:
+  clusterIP: None
+  selector:
+    app: clickhouse
+  ports:
+    - port: 8123
+      targetPort: 8123
+      name: http
+    - port: 9000
+      targetPort: 9000
+      name: native

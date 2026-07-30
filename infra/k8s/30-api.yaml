@@ -15,6 +15,15 @@ data:
   APP_APPLICATION__BASE_URL: "https://oxid.uk"
   APP_CACHE__HOST: "redis.oxid.svc.cluster.local"
   APP_CACHE__PORT: "6379"
+  # Analytics on in production. The password is a Secret, wired as an env on the
+  # Deployment below; everything else is plain config. If ClickHouse is down the
+  # sink degrades to disabled and the redirect keeps serving — analytics is never
+  # on the hot path.
+  APP_ANALYTICS__BACKEND: "clickhouse"
+  APP_ANALYTICS__CLICKHOUSE__HOST: "clickhouse.oxid.svc.cluster.local"
+  APP_ANALYTICS__CLICKHOUSE__PORT: "8123"
+  APP_ANALYTICS__CLICKHOUSE__USER: "oxid"
+  APP_ANALYTICS__CLICKHOUSE__DATABASE: "oxid"
   RUST_LOG: "oxid=info,tower_http=info,warn"
 
 ---
@@ -59,6 +68,11 @@ spec:
             - name: APP_DATABASE__DATABASE_NAME
               valueFrom:
                 secretKeyRef: { name: oxid-db, key: database }
+            # The one analytics value that is a secret; the rest live in the
+            # ConfigMap above.
+            - name: APP_ANALYTICS__CLICKHOUSE__PASSWORD
+              valueFrom:
+                secretKeyRef: { name: oxid-clickhouse, key: password }
 
           ports:
             - containerPort: 3000

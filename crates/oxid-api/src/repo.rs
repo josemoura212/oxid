@@ -266,3 +266,30 @@ pub async fn list_owned(
     .fetch_all(pool)
     .await
 }
+
+/// Just the ids of an owner's codes, newest first, for the overview.
+///
+/// The overview asks ClickHouse for the daily series of every one of these at
+/// once, so the `limit` here bounds the `IN` list that query builds — not the
+/// number of lines the chart ends up drawing, which the handler trims further by
+/// click volume. Newest-first so a capped fetch keeps the links most likely to
+/// still be in the 30-day analytics window.
+pub async fn list_owned_code_ids(
+    pool: &PgPool,
+    owner_id: i64,
+    limit: i64,
+) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT id
+        FROM short_codes
+        WHERE owner_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT $2
+        "#,
+        owner_id,
+        limit
+    )
+    .fetch_all(pool)
+    .await
+}

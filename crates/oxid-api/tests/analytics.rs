@@ -127,6 +127,55 @@ async fn recorded_clicks_come_back_in_the_summary() {
 }
 
 #[tokio::test]
+async fn overview_groups_every_codes_clicks_in_one_pass() {
+    let sink = sink().await;
+    let code_a = code_id(4);
+    let code_b = code_id(5);
+
+    // code_a: two clicks the same day. code_b: one, a day later.
+    sink.record(&[
+        event(code_a, at(2026, 7, 12, 9), 1),
+        event(code_a, at(2026, 7, 12, 15), 2),
+        event(code_b, at(2026, 7, 13, 9), 3),
+    ])
+    .await
+    .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let range = DateRange {
+        from: at(2026, 7, 1, 0),
+        to: at(2026, 8, 1, 0),
+    };
+    let groups = sink.overview(&[code_a, code_b], range).await.unwrap();
+
+    assert_eq!(groups.len(), 2, "one group per code");
+
+    let a = groups.iter().find(|g| g.code_id == code_a).unwrap();
+    let b = groups.iter().find(|g| g.code_id == code_b).unwrap();
+
+    assert_eq!(a.total, 2);
+    assert_eq!(a.series.len(), 1, "both clicks fall on one day");
+    assert_eq!(a.series[0].clicks, 2);
+    assert_eq!(b.total, 1);
+}
+
+/// An empty id list short-circuits: `IN []` would match nothing anyway, and the
+/// sink returns before touching ClickHouse.
+#[tokio::test]
+async fn overview_of_no_codes_is_empty() {
+    let sink = sink().await;
+
+    let range = DateRange {
+        from: at(2026, 7, 1, 0),
+        to: at(2026, 8, 1, 0),
+    };
+    let groups = sink.overview(&[], range).await.unwrap();
+
+    assert!(groups.is_empty());
+}
+
+#[tokio::test]
 async fn a_code_never_sees_another_codes_clicks() {
     let sink = sink().await;
 

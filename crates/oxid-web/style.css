@@ -695,6 +695,49 @@ body {
   fill: var(--accent-face);
 }
 
+/* The overview's multi-line chart. Taller than the single-link bars so eight
+   lines stay legible; the stroke width is fixed in screen pixels by
+   non-scaling-stroke on the element, so the stretched viewBox does not fatten
+   it. */
+.chart-multi {
+  height: 7rem;
+}
+
+.chart-line {
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font: 0.72rem/1 var(--mono);
+}
+
+.legend-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex: none;
+}
+
+.legend-code {
+  color: var(--fg);
+}
+
+.legend-total {
+  color: var(--muted);
+}
+
 /* Account menu (top bar).
  *
  * The hamburger replaces the bare "sign out" button so both sign-out actions —

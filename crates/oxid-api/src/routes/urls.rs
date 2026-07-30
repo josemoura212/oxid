@@ -1,6 +1,6 @@
 //! The signed-in owner's links.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     Json,
@@ -8,7 +8,7 @@ use axum::{
 };
 use oxid_shared::{
     ClickPoint, ClickStats, ImportRequest, ImportResponse, LinkPage, MAX_IMPORT, MAX_URL_LEN,
-    OwnedLink,
+    OverviewLink, OverviewStats, OwnedLink,
 };
 use serde::Deserialize;
 use sqlx::types::chrono::{DateTime, Utc};
@@ -25,6 +25,29 @@ const DEFAULT_LIMIT: i64 = 20;
 /// (the ClickHouse TTL), so anything longer is clamped to that.
 const DEFAULT_STATS_DAYS: i64 = 7;
 const MAX_STATS_DAYS: i64 = 30;
+
+/// Seconds in a day, for the overview's day grid.
+const DAY_SECONDS: i64 = 86_400;
+
+/// How many of an owner's codes the overview pulls from Postgres — the size of
+/// the `IN` list the ClickHouse query then builds.
+const MAX_OVERVIEW_FETCH: i64 = 50;
+
+/// How many lines the overview chart actually draws, the busiest first. Beyond a
+/// handful a multi-line chart stops being readable, so the rest are folded away
+/// rather than crammed on.
+const MAX_OVERVIEW_LINKS: usize = 8;
+
+/// The half-open window a `days` count maps to, `[now - days, now]`.
+///
+/// The clamp upstream keeps `days` within the 30-day TTL, so the second
+/// arithmetic never overflows: at most 30 days of them.
+fn window(days: i64) -> DateRange {
+    let to = Utc::now();
+    let span = days.saturating_mul(DAY_SECONDS);
+    let from = DateTime::from_timestamp(to.timestamp().saturating_sub(span), 0).unwrap_or(to);
+    DateRange { from, to }
+}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Pagination {
@@ -184,15 +207,10 @@ pub(super) async fn stats(
         .days
         .unwrap_or(DEFAULT_STATS_DAYS)
         .clamp(1, MAX_STATS_DAYS);
-    let to = Utc::now();
-    // Timestamp arithmetic keeps the whole thing checked, and the clamp above
-    // means the seconds never overflow: at most 30 days of them.
-    let window = days.saturating_mul(86_400);
-    let from = DateTime::from_timestamp(to.timestamp().saturating_sub(window), 0).unwrap_or(to);
 
     let summary = state
         .clicks
-        .summary(code_id, DateRange { from, to })
+        .summary(code_id, window(days))
         .await
         .map_err(|_| AppError::Internal("failed to read analytics"))?;
 
@@ -210,4 +228,103 @@ pub(super) async fn stats(
         unique: summary.unique,
         series,
     }))
+}
+
+/// The aggregate screen: every one of the caller's links on one shared day axis.
+///
+/// Owner-scoped by construction, not by a check: it reads only its own codes from
+/// Postgres and asks ClickHouse about exactly those, so unlike [`stats`] there is
+/// no foreign id to guard and nothing another account could probe.
+pub(super) async fn overview(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Query(query): Query<StatsQuery>,
+) -> Result<Json<OverviewStats>, AppError> {
+    let days = query
+        .days
+        .unwrap_or(DEFAULT_STATS_DAYS)
+        .clamp(1, MAX_STATS_DAYS);
+    let range = window(days);
+
+    // The shared x-axis, dense from the window's first day to its last. Built
+    // once so a day nobody clicked is a zero in every line rather than a gap one
+    // line has and another does not.
+    let grid = day_grid(range);
+    let days_iso: Vec<String> = grid
+        .iter()
+        .map(|ts| {
+            DateTime::from_timestamp(*ts, 0)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_default()
+        })
+        .collect();
+
+    let code_ids =
+        repo::list_owned_code_ids(&state.db_pool, session.user_id, MAX_OVERVIEW_FETCH).await?;
+
+    if code_ids.is_empty() {
+        return Ok(Json(OverviewStats {
+            days: days_iso,
+            links: Vec::new(),
+        }));
+    }
+
+    let mut groups = state
+        .clicks
+        .overview(&code_ids, range)
+        .await
+        .map_err(|_| AppError::Internal("failed to read analytics"))?;
+
+    // Busiest first, and only as many lines as the chart can carry.
+    groups.sort_by_key(|group| std::cmp::Reverse(group.total));
+    groups.truncate(MAX_OVERVIEW_LINKS);
+
+    let mut links = Vec::with_capacity(groups.len());
+    for group in groups {
+        let id =
+            u64::try_from(group.code_id).map_err(|_| AppError::Internal("row id is negative"))?;
+        let code = codec::shortcode(id)
+            .ok_or(AppError::Internal("row id outside the shortcode domain"))?;
+
+        // Align this line's sparse days onto the shared grid.
+        let by_day: HashMap<i64, u64> = group
+            .series
+            .into_iter()
+            .map(|point| (point.at.timestamp(), point.clicks))
+            .collect();
+        let clicks = grid
+            .iter()
+            .map(|ts| by_day.get(ts).copied().unwrap_or(0))
+            .collect();
+
+        links.push(OverviewLink {
+            code,
+            total: group.total,
+            clicks,
+        });
+    }
+
+    Ok(Json(OverviewStats {
+        days: days_iso,
+        links,
+    }))
+}
+
+/// The window's day-start timestamps, oldest first — the axis every line shares.
+///
+/// Whole-number and saturating: `rem_euclid` floors to the day with a positive
+/// divisor that cannot panic, and the loop is bounded by the 30-day clamp, so at
+/// most 31 entries ever land here.
+fn day_grid(range: DateRange) -> Vec<i64> {
+    let day_start = |ts: i64| ts.saturating_sub(ts.rem_euclid(DAY_SECONDS));
+    let start = day_start(range.from.timestamp());
+    let end = day_start(range.to.timestamp());
+
+    let mut grid = Vec::new();
+    let mut at = start;
+    while at <= end {
+        grid.push(at);
+        at = at.saturating_add(DAY_SECONDS);
+    }
+    grid
 }

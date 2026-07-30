@@ -10,7 +10,7 @@ use clickhouse::{Client, Row};
 use serde::Deserialize;
 use sqlx::types::chrono::DateTime;
 
-use super::{ClickEvent, DateRange, SCHEMA, Summary, TimePoint};
+use super::{ClickEvent, DateRange, SCHEMA, SeriesGroup, Summary, TimePoint};
 use crate::configuration::{AnalyticsBackend, AnalyticsSettings};
 
 /// The totals row. Column order, not field names, has to match the SELECT — the
@@ -24,6 +24,15 @@ struct Totals {
 /// One day's bucket, `at` as a Unix timestamp to avoid `DateTime` deserialization.
 #[derive(Row, Deserialize)]
 struct Bucket {
+    at: u32,
+    clicks: u64,
+}
+
+/// One grouped bucket for the overview: the same as [`Bucket`] but carrying the
+/// code it belongs to, so a single query covers every one of an owner's links.
+#[derive(Row, Deserialize)]
+struct GroupBucket {
+    code_id: i64,
     at: u32,
     clicks: u64,
 }
@@ -188,6 +197,71 @@ impl ClickSink {
                     unique: totals.unique,
                     series,
                 })
+            }
+        }
+    }
+
+    /// Daily buckets for many codes at once, one query rather than one per link.
+    ///
+    /// The rows come back sorted by `(code_id, at)`, so folding them into groups
+    /// is a single pass with no map. Each group's sparse series and its window
+    /// total go up to the handler, which aligns them to a shared day axis — the
+    /// query stays a plain group-by and the presentation concern stays out of it.
+    ///
+    /// `IN ?` binds the slice as a ClickHouse array. An empty slice never reaches
+    /// the query: it would render `IN []` and match nothing anyway, so the caller
+    /// is short-circuited to an empty result.
+    pub async fn overview(
+        &self,
+        code_ids: &[i64],
+        range: DateRange,
+    ) -> Result<Vec<SeriesGroup>, SinkError> {
+        match self {
+            Self::Disabled => Ok(Vec::new()),
+            Self::ClickHouse(_) if code_ids.is_empty() => Ok(Vec::new()),
+            Self::ClickHouse(client) => {
+                let from = range.from.timestamp();
+                let to = range.to.timestamp();
+
+                let rows = client
+                    .query(
+                        "SELECT code_id, toUnixTimestamp(toStartOfDay(created_at)) AS at, count() AS clicks \
+                         FROM click_events \
+                         WHERE code_id IN ? \
+                           AND created_at >= fromUnixTimestamp(?) \
+                           AND created_at <  fromUnixTimestamp(?) \
+                         GROUP BY code_id, at ORDER BY code_id, at",
+                    )
+                    .bind(code_ids)
+                    .bind(from)
+                    .bind(to)
+                    .fetch_all::<GroupBucket>()
+                    .await?;
+
+                let mut groups: Vec<SeriesGroup> = Vec::new();
+                for row in rows {
+                    let Some(at) = DateTime::from_timestamp(i64::from(row.at), 0) else {
+                        continue;
+                    };
+                    let point = TimePoint {
+                        at,
+                        clicks: row.clicks,
+                    };
+
+                    match groups.last_mut() {
+                        Some(group) if group.code_id == row.code_id => {
+                            group.total = group.total.saturating_add(row.clicks);
+                            group.series.push(point);
+                        }
+                        _ => groups.push(SeriesGroup {
+                            code_id: row.code_id,
+                            total: row.clicks,
+                            series: vec![point],
+                        }),
+                    }
+                }
+
+                Ok(groups)
             }
         }
     }

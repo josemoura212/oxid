@@ -10,7 +10,7 @@
 use gloo_net::http::{Request, Response};
 use oxid_shared::{
     AccountResponse, ClickStats, CredentialsRequest, ImportRequest, ImportResponse, LinkPage,
-    ProblemDetails, ShortenRequest, ShortenResponse,
+    OverviewStats, ProblemDetails, ShortenRequest, ShortenResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -130,4 +130,10 @@ pub async fn import(urls: Vec<String>) -> Result<ImportResponse, String> {
 /// Click analytics for one of the account's codes, over the last `days`.
 pub async fn link_stats(code: &str, days: u32) -> Result<ClickStats, String> {
     get(&format!("/v1/urls/{code}/stats?days={days}")).await
+}
+
+/// Every one of the account's links on one axis, over the last `days`. The
+/// aggregate counterpart to [`link_stats`].
+pub async fn overview(days: u32) -> Result<OverviewStats, String> {
+    get(&format!("/v1/urls/overview?days={days}")).await
 }

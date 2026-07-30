@@ -320,3 +320,40 @@ async fn pagination_walks_every_row_once(pool: PgPool) {
 
     assert_eq!(seen.len(), 25);
 }
+
+/// The overview's id source: an owner's own codes, newest first, capped.
+#[sqlx::test(migrations = "../../migrations")]
+async fn owned_code_ids_are_the_owners_newest_first(pool: PgPool) {
+    let ana = make_user(&pool, "ana@example.com").await.unwrap().unwrap();
+    let bruno = make_user(&pool, "bruno@example.com")
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut ana_codes = Vec::new();
+    for n in 0..3 {
+        let url_id = repo::upsert_url(&pool, &format!("https://example.com/{n}"))
+            .await
+            .unwrap();
+        ana_codes.push(repo::upsert_code(&pool, url_id, Some(ana)).await.unwrap());
+    }
+
+    // One for bruno and one anonymous, on a shared URL — neither belongs in ana's
+    // list.
+    let shared = repo::upsert_url(&pool, "https://example.com/shared")
+        .await
+        .unwrap();
+    repo::upsert_code(&pool, shared, Some(bruno)).await.unwrap();
+    repo::upsert_code(&pool, shared, None).await.unwrap();
+
+    let ids = repo::list_owned_code_ids(&pool, ana, 50).await.unwrap();
+
+    // Only ana's three, and newest first — the reverse of insertion order.
+    let mut expected = ana_codes.clone();
+    expected.reverse();
+    assert_eq!(ids, expected);
+
+    // The limit caps the list to the newest.
+    let capped = repo::list_owned_code_ids(&pool, ana, 2).await.unwrap();
+    assert_eq!(capped.as_slice(), &expected[..2]);
+}

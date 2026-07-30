@@ -96,6 +96,18 @@ impl Summary {
     }
 }
 
+/// One code's line for the overview.
+///
+/// Carries its id, the window total that ranks it, and its sparse daily series.
+/// Sparse on purpose — the handler densifies against a shared day axis, which is
+/// where the alignment belongs, not in the query.
+#[derive(Debug, Clone)]
+pub struct SeriesGroup {
+    pub code_id: i64,
+    pub total: u64,
+    pub series: Vec<TimePoint>,
+}
+
 /// The table, created idempotently on connect.
 ///
 /// `ORDER BY (code_id, created_at)` is the one decision that governs read speed:

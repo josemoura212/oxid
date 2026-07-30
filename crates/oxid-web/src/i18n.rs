@@ -170,6 +170,8 @@ pub struct Strings {
     pub stats_empty: &'static str,
     pub stats_error: &'static str,
     pub stats_loading: &'static str,
+    pub overview_open: &'static str,
+    pub overview_title: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -221,6 +223,8 @@ static EN: Strings = Strings {
     stats_empty: "No clicks yet in this window.",
     stats_error: "Could not load the stats.",
     stats_loading: "Loading…",
+    overview_open: "Overview",
+    overview_title: "All your links",
 };
 
 static PT_BR: Strings = Strings {
@@ -272,6 +276,8 @@ static PT_BR: Strings = Strings {
     stats_empty: "Nenhum clique ainda nesta janela.",
     stats_error: "Não foi possível carregar os dados.",
     stats_loading: "Carregando…",
+    overview_open: "Dados gerais",
+    overview_title: "Todos os seus links",
 };
 
 #[cfg(test)]

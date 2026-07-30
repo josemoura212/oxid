@@ -1,7 +1,7 @@
 //! Sign in, sign up, and the links that belong to an account.
 
 use leptos::prelude::*;
-use oxid_shared::{ClickPoint, ClickStats, OwnedLink};
+use oxid_shared::{ClickPoint, ClickStats, OverviewLink, OverviewStats, OwnedLink};
 
 use crate::{api, i18n::Locale, storage::SavedLink};
 
@@ -722,22 +722,239 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
     }
 }
 
+/// Line colours for the overview, one per link in rank order. Mid-tones chosen to
+/// read on both the light and dark background, and exactly eight — the server's
+/// `MAX_OVERVIEW_LINKS` — so the index never runs past the palette.
+const LINE_COLORS: [&str; 8] = [
+    "#d4693a", "#4f9d69", "#4a7fb5", "#b5544a", "#9a6fb0", "#c9a227", "#5aa9a3", "#8a8f98",
+];
+
+/// A polyline per link over the shared day axis, plus a legend.
+///
+/// Every link's `clicks` is the same length as the axis, so a point is just its
+/// index times the step — no date reconciling on this side. `non-scaling-stroke`
+/// keeps the lines crisp despite the stretched viewBox, and the colours ride on
+/// SVG presentation attributes rather than inline styles, so a strict CSP has
+/// nothing to forbid.
+fn overview_chart(links: &[OverviewLink], aria: &'static str) -> impl IntoView {
+    let max = links
+        .iter()
+        .flat_map(|link| link.clicks.iter().copied())
+        .max()
+        .unwrap_or(0)
+        .max(1);
+    let axis = links.first().map_or(0, |link| link.clicks.len());
+    let step = if axis > 1 {
+        let span = u64::try_from(axis.saturating_sub(1)).unwrap_or(1);
+        CHART_W.checked_div(span).unwrap_or(0)
+    } else {
+        0
+    };
+
+    let polylines: Vec<_> = links
+        .iter()
+        .enumerate()
+        .map(|(rank, link)| {
+            let color = LINE_COLORS.get(rank).copied().unwrap_or("#8a8f98");
+            let points = link
+                .clicks
+                .iter()
+                .enumerate()
+                .map(|(index, clicks)| {
+                    let x = step.saturating_mul(u64::try_from(index).unwrap_or(0));
+                    let height = clicks.saturating_mul(CHART_H).checked_div(max).unwrap_or(0);
+                    let y = CHART_H.saturating_sub(height);
+                    format!("{x},{y}")
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            view! {
+                <polyline
+                    class="chart-line"
+                    points=points
+                    fill="none"
+                    stroke=color
+                    vector-effect="non-scaling-stroke"
+                />
+            }
+        })
+        .collect();
+
+    view! {
+        <svg
+            class="chart chart-multi"
+            viewBox=format!("0 0 {CHART_W} {CHART_H}")
+            preserveAspectRatio="none"
+            role="img"
+            aria-label=aria
+        >
+            {polylines}
+        </svg>
+    }
+}
+
+/// The legend under the overview chart: a swatch, the code, and its window total,
+/// one row per line, in the same rank order as the colours.
+fn overview_legend(links: &[OverviewLink]) -> impl IntoView {
+    let items: Vec<_> = links
+        .iter()
+        .enumerate()
+        .map(|(rank, link)| {
+            let color = LINE_COLORS.get(rank).copied().unwrap_or("#8a8f98");
+            let code = link.code.clone();
+            let total = link.total.to_string();
+            view! {
+                <li class="legend-item">
+                    <svg class="legend-swatch" viewBox="0 0 10 10" aria-hidden="true">
+                        <rect width="10" height="10" rx="2" fill=color></rect>
+                    </svg>
+                    <span class="legend-code">{code}</span>
+                    <span class="legend-total">{total}</span>
+                </li>
+            }
+        })
+        .collect();
+
+    view! { <ul class="chart-legend">{items}</ul> }
+}
+
+/// The aggregate dashboard: every one of the account's links on one axis. Opened
+/// from the list header, it shares the per-link dialog's window switch and its
+/// no-flash refetch.
+#[component]
+fn OverviewChart(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
+    let days = RwSignal::new(DEFAULT_WINDOW);
+    let data = RwSignal::new(None::<OverviewStats>);
+    let loading = RwSignal::new(false);
+    let failed = RwSignal::new(false);
+
+    let load = Action::new_local(move |days: &u32| {
+        let days = *days;
+        async move {
+            loading.set(true);
+            failed.set(false);
+            match api::overview(days).await {
+                Ok(payload) => data.set(Some(payload)),
+                Err(error) => {
+                    leptos::logging::warn!("could not load overview: {error}");
+                    failed.set(true);
+                }
+            }
+            loading.set(false);
+        }
+    });
+
+    // Fetches while the panel is open, and refetches on a window change under the
+    // current chart. Closing reads `open` as false and bails.
+    Effect::new(move |_| {
+        if !open.get() {
+            return;
+        }
+        load.dispatch(days.get());
+    });
+
+    view! {
+        <Show when=move || open.get()>
+            <div class="dialog-veil" role="presentation" on:click=move |_| open.set(false)></div>
+
+            <div
+                class="dialog stats-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-label=move || locale.get().strings().overview_title
+            >
+                <div class="stats-head">
+                    <span class="stats-code">{move || locale.get().strings().overview_title}</span>
+                </div>
+
+                <div class="stats-tabs" role="tablist">
+                    {STATS_WINDOWS
+                        .into_iter()
+                        .map(|window| {
+                            view! {
+                                <button
+                                    class="stats-tab"
+                                    class:active=move || days.get() == window
+                                    type="button"
+                                    role="tab"
+                                    aria-selected=move || {
+                                        if days.get() == window { "true" } else { "false" }
+                                    }
+                                    on:click=move |_| days.set(window)
+                                >
+                                    {format!("{window}d")}
+                                </button>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                </div>
+
+                <div class="stats-body" class:is-loading=move || loading.get()>
+                    {move || {
+                        let strings = locale.get().strings();
+                        if let Some(payload) = data.get() {
+                            if payload.links.is_empty() {
+                                return view! {
+                                    <p class="stats-status">{strings.stats_empty}</p>
+                                }
+                                    .into_any();
+                            }
+                            return view! {
+                                {overview_chart(&payload.links, strings.overview_title)}
+                                {overview_legend(&payload.links)}
+                            }
+                                .into_any();
+                        }
+
+                        if failed.get() {
+                            view! { <p class="stats-status">{strings.stats_error}</p> }.into_any()
+                        } else {
+                            view! { <p class="stats-status">{strings.stats_loading}</p> }.into_any()
+                        }
+                    }}
+                </div>
+
+                <button
+                    class="dialog-close"
+                    type="button"
+                    aria-label=move || locale.get().strings().close
+                    on:click=move |_| open.set(false)
+                >
+                    "×"
+                </button>
+            </div>
+        </Show>
+    }
+}
+
 /// The account's links, replacing the browser list once signed in.
 #[component]
 pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
     // Names the link whose stats are open, `None` when the dialog is shut. Lifted
     // to the list so one dialog serves every row instead of one per item.
     let active = RwSignal::new(None::<OwnedLink>);
+    // Whether the aggregate overview panel is open.
+    let overview_open = RwSignal::new(false);
     let more = Action::new_local(move |(): &()| async move { account.load_more().await });
 
     view! {
         <section class="vault">
             <div class="vault-head">
                 // Sign out and sign-out-everywhere both live in the top-bar menu
-                // now, so the list header carries only its title.
+                // now, so the header carries the title and the overview affordance.
                 <h2 class="vault-title">
                     {move || locale.get().strings().vault_account_title}
                 </h2>
+                <Show when=move || !account.links.read().is_empty()>
+                    <button
+                        class="vault-stats vault-overview"
+                        type="button"
+                        on:click=move |_| overview_open.set(true)
+                    >
+                        {move || locale.get().strings().overview_open}
+                    </button>
+                </Show>
             </div>
 
             <Show when=move || account.imported.get()>
@@ -809,6 +1026,7 @@ pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
             </Show>
 
             <LinkStats active=active locale=locale />
+            <OverviewChart open=overview_open locale=locale />
         </section>
     }
 }

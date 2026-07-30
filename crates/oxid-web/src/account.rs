@@ -517,15 +517,6 @@ const CHART_H: u64 = 96;
 /// Gap carved out of each day's slot, so neighbouring bars do not touch.
 const BAR_GAP: u64 = 3;
 
-/// The three states of the stats request. `None` in the signal means "not asked
-/// yet"; this covers only what happens once one is in flight.
-#[derive(Clone)]
-enum StatsState {
-    Loading,
-    Ready(ClickStats),
-    Failed,
-}
-
 /// One `<rect>` per day, each scaled against the busiest day in the window.
 ///
 /// All whole-number and saturating: the lints deny bare `/` and `*` here as much
@@ -587,20 +578,33 @@ fn chart(series: &[ClickPoint], aria: &'static str) -> impl IntoView {
 #[component]
 fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> impl IntoView {
     let days = RwSignal::new(DEFAULT_WINDOW);
-    let state = RwSignal::new(None::<StatsState>);
+    // The last payload that came back, kept across window switches: a range change
+    // refetches, but the old chart stays on screen until the new one arrives
+    // rather than flashing an empty "loading" in between. Cleared only when the
+    // open link changes, where a fresh context earns a fresh load.
+    let stats = RwSignal::new(None::<ClickStats>);
+    let loading = RwSignal::new(false);
+    let failed = RwSignal::new(false);
+    // Which link `stats` currently describes, so the effect can tell a window
+    // change (keep the chart) from a link change (drop it).
+    let shown = RwSignal::new(None::<String>);
 
     let load = Action::new_local(move |(code, days): &(String, u32)| {
         let code = code.clone();
         let days = *days;
         async move {
-            state.set(Some(StatsState::Loading));
+            loading.set(true);
+            failed.set(false);
             match api::link_stats(&code, days).await {
-                Ok(stats) => state.set(Some(StatsState::Ready(stats))),
+                Ok(payload) => stats.set(Some(payload)),
                 Err(error) => {
                     leptos::logging::warn!("could not load link stats: {error}");
-                    state.set(Some(StatsState::Failed));
+                    // The old numbers, if any, stay — a failed refresh should not
+                    // wipe what was already read.
+                    failed.set(true);
                 }
             }
+            loading.set(false);
         }
     });
 
@@ -609,8 +613,17 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
     // the guard bails, so shutting the dialog fires no request.
     Effect::new(move |_| {
         let Some(link) = active.get() else {
+            shown.set(None);
             return;
         };
+
+        // A different link than the one on screen: drop its chart so it does not
+        // flash under the new one. A mere window change leaves `stats` in place.
+        if shown.get_untracked().as_deref() != Some(link.code.as_str()) {
+            shown.set(Some(link.code.clone()));
+            stats.set(None);
+        }
+
         load.dispatch((link.code, days.get()));
     });
 
@@ -660,35 +673,38 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                         .collect::<Vec<_>>()}
                 </div>
 
-                <div class="stats-body">
+                <div class="stats-body" class:is-loading=move || loading.get()>
                     {move || {
                         let strings = locale.get().strings();
-                        match state.get() {
-                            None | Some(StatsState::Loading) => {
-                                view! { <p class="stats-status">{strings.stats_loading}</p> }
-                                    .into_any()
-                            }
-                            Some(StatsState::Failed) => {
-                                view! { <p class="stats-status">{strings.stats_error}</p> }
-                                    .into_any()
-                            }
-                            Some(StatsState::Ready(stats)) if stats.total == 0 => {
-                                view! { <p class="stats-status">{strings.stats_empty}</p> }
-                                    .into_any()
-                            }
-                            Some(StatsState::Ready(stats)) => {
-                                view! {
-                                    <div class="stats-figures">
-                                        <span class="stats-total">{stats.total.to_string()}</span>
-                                        <span class="stats-total-label">{strings.stats_total}</span>
-                                        <span class="stats-unique">
-                                            {format!("{} {}", stats.unique, strings.stats_unique)}
-                                        </span>
-                                    </div>
-                                    {chart(&stats.series, strings.stats_title)}
+                        // A payload on screen wins over every transient state: a
+                        // window switch refetches under it without a flash, and a
+                        // failed refresh keeps the last good numbers.
+                        if let Some(payload) = stats.get() {
+                            if payload.total == 0 {
+                                return view! {
+                                    <p class="stats-status">{strings.stats_empty}</p>
                                 }
-                                    .into_any()
+                                    .into_any();
                             }
+                            return view! {
+                                <div class="stats-figures">
+                                    <span class="stats-total">{payload.total.to_string()}</span>
+                                    <span class="stats-total-label">{strings.stats_total}</span>
+                                    <span class="stats-unique">
+                                        {format!("{} {}", payload.unique, strings.stats_unique)}
+                                    </span>
+                                </div>
+                                {chart(&payload.series, strings.stats_title)}
+                            }
+                                .into_any();
+                        }
+
+                        // Nothing read yet for this link: the only time the empty
+                        // states show, since after that a payload stays put.
+                        if failed.get() {
+                            view! { <p class="stats-status">{strings.stats_error}</p> }.into_any()
+                        } else {
+                            view! { <p class="stats-status">{strings.stats_loading}</p> }.into_any()
                         }
                     }}
                 </div>

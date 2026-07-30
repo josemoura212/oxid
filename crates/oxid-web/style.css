@@ -647,6 +647,14 @@ body {
   min-height: 8rem;
 }
 
+/* A window switch refetches under the current chart; this dims it a touch while
+   the new data is on the wire, so the change registers without the old
+   flash-to-empty. */
+.stats-body.is-loading {
+  opacity: 0.6;
+  transition: opacity 120ms ease;
+}
+
 .stats-figures {
   display: flex;
   align-items: baseline;
@@ -716,6 +724,9 @@ body {
   top: calc(100% + 0.4rem);
   right: 0;
   z-index: 21;
+  /* Grows to the longest label — "Sair de todos os dispositivos" — instead of
+     wrapping it, while the right-anchored edge keeps it under the toggle. */
+  width: max-content;
   min-width: 14rem;
   display: flex;
   flex-direction: column;
@@ -735,6 +746,7 @@ body {
   font: inherit;
   font-size: 0.9rem;
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
 

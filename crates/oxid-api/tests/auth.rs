@@ -16,7 +16,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use oxid::{
-    analytics::ClickSink,
+    analytics::{ClickSink, ClickTx},
     auth::{
         password::{Decoy, Hasher},
         session::SessionStore,
@@ -59,6 +59,7 @@ async fn app(pool: PgPool) -> Router {
         sessions: SessionStore::new(conn, 3600),
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
+        clicks_tx: ClickTx::disabled(),
         hasher: Hasher::new(4, Duration::from_secs(5), Decoy::generate().unwrap()),
         // False, so the cookie is not `Secure` — a test client speaks plain HTTP,
         // and a `Secure` cookie would be dropped, making every follow-up look
@@ -187,6 +188,7 @@ async fn the_session_cookie_is_hardened(pool: PgPool) {
         sessions: SessionStore::new(conn, 3600),
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
+        clicks_tx: ClickTx::disabled(),
         hasher: Hasher::new(4, Duration::from_secs(5), Decoy::generate().unwrap()),
         secure_cookies: true,
         session_ttl_seconds: 3600,
@@ -334,6 +336,7 @@ async fn logout_all_revokes_every_device(pool: PgPool) {
         sessions: SessionStore::with_namespace(conn, 3600, &ns),
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
+        clicks_tx: ClickTx::disabled(),
         hasher: Hasher::new(4, Duration::from_secs(5), Decoy::generate().unwrap()),
         secure_cookies: false,
         session_ttl_seconds: 3600,

@@ -81,15 +81,14 @@ async fn resolve_returns_the_shortened_url(pool: PgPool) {
     let url = "https://example.com/roundtrip";
     let code_id = shorten_anon(&pool, url).await.unwrap();
 
-    assert_eq!(
-        repo::resolve_code(&pool, code_id).await.unwrap(),
-        Some(url.to_owned())
-    );
+    let resolved = repo::resolve_code(&pool, code_id).await.unwrap().unwrap();
+    assert_eq!(resolved.long_url, url);
+    assert!(!resolved.owned, "an anonymous code must resolve as unowned");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn resolve_of_unknown_id_returns_none(pool: PgPool) {
-    assert_eq!(repo::resolve_code(&pool, 999_999).await.unwrap(), None);
+    assert!(repo::resolve_code(&pool, 999_999).await.unwrap().is_none());
 }
 
 /// URLs with a backslash broke when the hash used `long_url::bytea`.
@@ -102,8 +101,12 @@ async fn url_with_backslash_is_accepted(pool: PgPool) {
 
     assert_eq!(first, second);
     assert_eq!(
-        repo::resolve_code(&pool, first).await.unwrap(),
-        Some(url.to_owned())
+        repo::resolve_code(&pool, first)
+            .await
+            .unwrap()
+            .unwrap()
+            .long_url,
+        url
     );
 }
 
@@ -149,11 +152,15 @@ async fn two_owners_share_the_url_row_but_not_the_code(pool: PgPool) {
 
     assert_ne!(ana_code, bruno_code, "owners must not share a code");
 
-    // Both still resolve to the same destination, from one stored URL.
-    assert_eq!(
-        repo::resolve_code(&pool, ana_code).await.unwrap(),
-        repo::resolve_code(&pool, bruno_code).await.unwrap()
-    );
+    // Both still resolve to the same destination, from one stored URL — and both
+    // read as owned.
+    let ana_resolved = repo::resolve_code(&pool, ana_code).await.unwrap().unwrap();
+    let bruno_resolved = repo::resolve_code(&pool, bruno_code)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ana_resolved.long_url, bruno_resolved.long_url);
+    assert!(ana_resolved.owned && bruno_resolved.owned);
 
     let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM urls")
         .fetch_one(&pool)

@@ -138,8 +138,9 @@ pub(super) async fn import(
             .ok_or(AppError::Internal("row id outside the shortcode domain"))?;
 
         // Warm on write, same reasoning as `shorten`: whoever just imported a
-        // list is about to look at it.
-        state.cache.set_url(&code, long_url).await;
+        // list is about to look at it. Always owned — an import claims the code
+        // for the signed-in account.
+        state.cache.set_url(&code, long_url, true).await;
 
         imported = imported.saturating_add(1);
     }

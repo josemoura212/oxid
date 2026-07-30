@@ -87,14 +87,24 @@ pub async fn upsert_code(
     .await
 }
 
-/// Resolves a code id to its destination.
+#[derive(Debug)]
+pub struct Resolved {
+    pub long_url: String,
+    /// Whether the code has an owner. Decides 301 vs 302 and whether the redirect
+    /// records a click — carried out of the same query so the redirect learns it
+    /// without a second round trip.
+    pub owned: bool,
+}
+
+/// Resolves a code id to its destination and ownership.
 ///
 /// One join, both sides by primary key. The cache absorbs almost all of this
 /// path, so the extra hop costs nothing at the volumes that matter.
-pub async fn resolve_code(pool: &PgPool, code_id: i64) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar!(
+pub async fn resolve_code(pool: &PgPool, code_id: i64) -> Result<Option<Resolved>, sqlx::Error> {
+    sqlx::query_as!(
+        Resolved,
         r#"
-        SELECT u.long_url
+        SELECT u.long_url, (sc.owner_id IS NOT NULL) AS "owned!"
         FROM short_codes sc
         JOIN urls u ON u.id = sc.url_id
         WHERE sc.id = $1

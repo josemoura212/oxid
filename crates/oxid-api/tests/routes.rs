@@ -15,7 +15,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use oxid::{
-    analytics::ClickSink,
+    analytics::{ClickSink, ClickTx},
     auth::{
         password::{Decoy, Hasher},
         session::SessionStore,
@@ -52,6 +52,7 @@ fn app(pool: PgPool) -> Router {
         sessions: SessionStore::disabled(),
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
+        clicks_tx: ClickTx::disabled(),
         hasher: Hasher::new(
             HASH_CONCURRENCY,
             std::time::Duration::from_millis(HASH_WAIT_MS),
@@ -308,6 +309,7 @@ async fn shorten_is_rate_limited_and_the_redirect_is_not(pool: PgPool) {
         sessions: SessionStore::disabled(),
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
+        clicks_tx: ClickTx::disabled(),
         hasher: Hasher::new(
             HASH_CONCURRENCY,
             std::time::Duration::from_millis(HASH_WAIT_MS),

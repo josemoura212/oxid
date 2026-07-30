@@ -50,7 +50,11 @@ fn at(y: i32, m: u32, d: u32, h: u32) -> DateTime<Utc> {
 /// within a run; the process id distinguishes runs. CI starts with a clean
 /// server, so it does not need this — local reruns do.
 fn code_id(n: i64) -> i64 {
-    9_000_000_000 + i64::from(std::process::id()) * 10 + n
+    // Saturating because the arithmetic lint is denied even in tests; overflow is
+    // impossible here, but the checked form is what the lint accepts.
+    9_000_000_000_i64
+        .saturating_add(i64::from(std::process::id()).saturating_mul(10))
+        .saturating_add(n)
 }
 
 fn event(code_id: i64, when: DateTime<Utc>, visitor: u64) -> ClickEvent {

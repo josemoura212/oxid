@@ -2,7 +2,7 @@ use anyhow::Context;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 use crate::{
-    analytics::ClickSink,
+    analytics::{self, ClickSink, ClickTx},
     auth::{
         password::{Decoy, Hasher},
         session::SessionStore,
@@ -16,9 +16,11 @@ pub struct AppState {
     pub db_pool: PgPool,
     pub cache: Cache,
     pub sessions: SessionStore,
-    /// Where click events go. `Disabled` unless the config selects a backend, and
-    /// nothing writes to it yet — the hot-path emit and the batching worker are
-    /// later slices. Held here so a misconfigured backend fails the boot.
+    /// The write side: the redirect emits a click here, and a background worker
+    /// batches into ClickHouse. A no-op when analytics is disabled.
+    pub clicks_tx: ClickTx,
+    /// The read side: the dashboard endpoint asks this for a code's summary. The
+    /// worker holds its own clone for writing; this one only ever reads.
     pub clicks: ClickSink,
     pub base_url: String,
     /// Runs Argon2 off the runtime and under a concurrency cap. Holds the decoy,
@@ -67,6 +69,9 @@ impl AppState {
         // table, and degrades to disabled if it cannot — analytics never fails
         // the boot, because it is on no request path. See [`ClickSink::connect`].
         let clicks = ClickSink::connect(&settings.analytics).await;
+        // The worker takes its own clone to write with; `clicks` stays for the
+        // dashboard to read. `spawn` returns a no-op sender when the sink is off.
+        let clicks_tx = analytics::spawn(clicks.clone());
 
         let base_url = settings.application.base_url.clone();
         let secure_cookies = base_url.starts_with("https://");
@@ -78,6 +83,7 @@ impl AppState {
             db_pool,
             cache,
             sessions,
+            clicks_tx,
             clicks,
             base_url,
             hasher,

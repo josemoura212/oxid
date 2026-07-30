@@ -15,8 +15,10 @@
 //! Nothing writes yet; the batching worker and the hot-path emit come next.
 
 mod sink;
+mod worker;
 
 pub use sink::{ClickSink, SinkError};
+pub use worker::{ClickTx, spawn};
 
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};

@@ -14,9 +14,7 @@ use serde::Deserialize;
 use sqlx::types::chrono::{DateTime, Utc};
 use url::Url;
 
-use crate::{
-    analytics::DateRange, auth::Session, codec, error::AppError, repo, state::AppState,
-};
+use crate::{analytics::DateRange, auth::Session, codec, error::AppError, repo, state::AppState};
 
 /// Page size ceiling. A client asking for more gets this — the limit exists to
 /// bound one query's work, so honouring a larger request would defeat it.
@@ -182,7 +180,10 @@ pub(super) async fn stats(
         return Err(AppError::NotFound);
     }
 
-    let days = query.days.unwrap_or(DEFAULT_STATS_DAYS).clamp(1, MAX_STATS_DAYS);
+    let days = query
+        .days
+        .unwrap_or(DEFAULT_STATS_DAYS)
+        .clamp(1, MAX_STATS_DAYS);
     let to = Utc::now();
     // Timestamp arithmetic keeps the whole thing checked, and the clamp above
     // means the seconds never overflow: at most 30 days of them.

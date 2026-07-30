@@ -61,7 +61,10 @@ async fn stores_and_reads_back_a_url() {
 
     assert_eq!(
         cache.get(code).await,
-        Some(Cached::Url { long_url: "https://example.com/a".to_owned(), owned: false })
+        Some(Cached::Url {
+            long_url: "https://example.com/a".to_owned(),
+            owned: false
+        })
     );
 }
 
@@ -89,7 +92,9 @@ async fn positive_entries_never_expire_and_negative_ones_do() {
     clear(negative).await;
 
     let cache = cache().await;
-    cache.set_url(positive, "https://example.com/b", false).await;
+    cache
+        .set_url(positive, "https://example.com/b", false)
+        .await;
     cache.set_missing(negative).await;
 
     let mut conn = raw().await;
@@ -120,12 +125,17 @@ async fn a_negative_write_never_overwrites_a_positive_one() {
 
     let cache = cache().await;
 
-    cache.set_url(code, "https://example.com/winner", false).await;
+    cache
+        .set_url(code, "https://example.com/winner", false)
+        .await;
     cache.set_missing(code).await;
 
     assert_eq!(
         cache.get(code).await,
-        Some(Cached::Url { long_url: "https://example.com/winner".to_owned(), owned: false }),
+        Some(Cached::Url {
+            long_url: "https://example.com/winner".to_owned(),
+            owned: false
+        }),
         "the negative write clobbered the URL"
     );
 }
@@ -140,7 +150,11 @@ async fn the_positive_survives_concurrent_writes() {
     let writer = cache.clone();
 
     let (positive, negative) = tokio::join!(
-        async { writer.set_url(code, "https://example.com/winner", false).await },
+        async {
+            writer
+                .set_url(code, "https://example.com/winner", false)
+                .await;
+        },
         async {
             tokio::time::sleep(Duration::from_millis(5)).await;
             cache.set_missing(code).await;

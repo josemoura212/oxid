@@ -66,7 +66,11 @@ fn finish(
         // 301, not `Redirect::permanent` — that emits 308, which preserves the
         // method. Only GET reaches this route, and 301 is what shorteners have
         // always used, so caches and old clients handle it best.
-        return Ok((StatusCode::MOVED_PERMANENTLY, [(header::LOCATION, location)]).into_response());
+        return Ok((
+            StatusCode::MOVED_PERMANENTLY,
+            [(header::LOCATION, location)],
+        )
+            .into_response());
     }
 
     // Decoding again here rather than threading the id through: on a cache hit it
@@ -104,7 +108,12 @@ fn finish(
 /// restarts — which is what lets `uniq()` count one visitor as one. It is not a
 /// cryptographic secret; a keyed daily salt is a later refinement.
 fn visitor_hash(headers: &HeaderMap) -> u64 {
-    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+    };
 
     // First hop of X-Forwarded-For is the client the CDN saw; fall back to
     // X-Real-IP. Absent both (a direct request), the empty string still yields a

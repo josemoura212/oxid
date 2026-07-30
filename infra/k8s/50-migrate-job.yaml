@@ -38,6 +38,22 @@ spec:
               valueFrom:
                 secretKeyRef: { name: oxid-db, key: database }
 
+            # The migrator loads the whole `Settings` but reads only
+            # `settings.database`. The ConfigMap above turns analytics on for the
+            # API, and this Job inherits that — which makes
+            # `analytics.clickhouse.password` a required field for a process that
+            # never opens a ClickHouse connection. An explicit `env` overrides
+            # `envFrom`, so these two lines say what is true: no analytics here.
+            #
+            # A placeholder rather than the real Secret on purpose. Handing a
+            # credential to a process that cannot use it widens the blast radius of
+            # this Job for nothing. The deeper fix is for the migrator to load only
+            # the section it needs — see ROADMAP.md.
+            - name: APP_ANALYTICS__BACKEND
+              value: "off"
+            - name: APP_ANALYTICS__CLICKHOUSE__PASSWORD
+              value: ""
+
           resources:
             requests: { cpu: 50m, memory: 32Mi }
             limits: { memory: 128Mi }

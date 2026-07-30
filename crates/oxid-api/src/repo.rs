@@ -115,6 +115,27 @@ pub async fn resolve_code(pool: &PgPool, code_id: i64) -> Result<Option<Resolved
     .await
 }
 
+/// Whether this code exists and belongs to this owner.
+///
+/// The dashboard uses it to refuse a code that is not the caller's — answering
+/// the same 404 as a code that does not exist, so it cannot be used to probe
+/// which codes other people own.
+pub async fn owns_code(pool: &PgPool, code_id: i64, owner_id: i64) -> Result<bool, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        r#"
+        SELECT 1 AS "one!"
+        FROM short_codes
+        WHERE id = $1 AND owner_id = $2
+        "#,
+        code_id,
+        owner_id
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(found.is_some())
+}
+
 pub struct Credentials {
     pub user_id: i64,
     pub password_hash: String,

@@ -74,6 +74,25 @@ pub struct LinkPage {
     pub next_cursor: Option<String>,
 }
 
+/// Click analytics for one of the owner's links, over a time window.
+///
+/// Timestamps are RFC 3339 strings, like [`OwnedLink::created_at`] — the wire
+/// contract stays free of a date library, and the front formats them itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickStats {
+    pub total: u64,
+    /// Distinct visitors — `uniq(visitor_hash)` on the server.
+    pub unique: u64,
+    pub series: Vec<ClickPoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickPoint {
+    /// Start of the day this bucket counts, RFC 3339.
+    pub at: String,
+    pub clicks: u64,
+}
+
 /// Most URLs one import call will take.
 ///
 /// Bounded because the alternative is a single request that walks an unbounded

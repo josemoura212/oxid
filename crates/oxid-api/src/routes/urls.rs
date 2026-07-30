@@ -4,19 +4,29 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Query, State, rejection::JsonRejection},
+    extract::{Path, Query, State, rejection::JsonRejection},
 };
-use oxid_shared::{ImportRequest, ImportResponse, LinkPage, MAX_IMPORT, MAX_URL_LEN, OwnedLink};
+use oxid_shared::{
+    ClickPoint, ClickStats, ImportRequest, ImportResponse, LinkPage, MAX_IMPORT, MAX_URL_LEN,
+    OwnedLink,
+};
 use serde::Deserialize;
 use sqlx::types::chrono::{DateTime, Utc};
 use url::Url;
 
-use crate::{auth::Session, codec, error::AppError, repo, state::AppState};
+use crate::{
+    analytics::DateRange, auth::Session, codec, error::AppError, repo, state::AppState,
+};
 
 /// Page size ceiling. A client asking for more gets this — the limit exists to
 /// bound one query's work, so honouring a larger request would defeat it.
 const MAX_LIMIT: i64 = 100;
 const DEFAULT_LIMIT: i64 = 20;
+
+/// The dashboard offers 7/14/21/28-day windows; the data only lives 30 days
+/// (the ClickHouse TTL), so anything longer is clamped to that.
+const DEFAULT_STATS_DAYS: i64 = 7;
+const MAX_STATS_DAYS: i64 = 30;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Pagination {
@@ -146,4 +156,57 @@ pub(super) async fn import(
     }
 
     Ok(Json(ImportResponse { imported, rejected }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct StatsQuery {
+    days: Option<i64>,
+}
+
+/// Click analytics for one of the caller's codes.
+///
+/// The code has to belong to the caller, and a code that does not — whether it
+/// exists under someone else or not at all — answers the same 404. Returning a
+/// different status for "exists but not yours" would let one account probe which
+/// codes another owns.
+pub(super) async fn stats(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Path(code): Path<String>,
+    Query(query): Query<StatsQuery>,
+) -> Result<Json<ClickStats>, AppError> {
+    let id = codec::resolve(&code).ok_or(AppError::NotFound)?;
+    let code_id = i64::try_from(id).map_err(|_| AppError::NotFound)?;
+
+    if !repo::owns_code(&state.db_pool, code_id, session.user_id).await? {
+        return Err(AppError::NotFound);
+    }
+
+    let days = query.days.unwrap_or(DEFAULT_STATS_DAYS).clamp(1, MAX_STATS_DAYS);
+    let to = Utc::now();
+    // Timestamp arithmetic keeps the whole thing checked, and the clamp above
+    // means the seconds never overflow: at most 30 days of them.
+    let window = days.saturating_mul(86_400);
+    let from = DateTime::from_timestamp(to.timestamp().saturating_sub(window), 0).unwrap_or(to);
+
+    let summary = state
+        .clicks
+        .summary(code_id, DateRange { from, to })
+        .await
+        .map_err(|_| AppError::Internal("failed to read analytics"))?;
+
+    let series = summary
+        .series
+        .into_iter()
+        .map(|point| ClickPoint {
+            at: point.at.to_rfc3339(),
+            clicks: point.clicks,
+        })
+        .collect();
+
+    Ok(Json(ClickStats {
+        total: summary.total,
+        unique: summary.unique,
+        series,
+    }))
 }

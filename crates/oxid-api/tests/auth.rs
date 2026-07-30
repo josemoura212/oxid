@@ -553,3 +553,80 @@ async fn per_link_stats_refuse_someone_elses_code(pool: PgPool) {
         .unwrap();
     assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
 }
+
+/// The 301/302 split, which is the reason click analytics can exist at all.
+///
+/// A 301 is cached by the browser, so the second click never reaches the server
+/// and cannot be counted. Only a code with an owner — the one with a dashboard to
+/// feed — becomes a 302; anonymous codes stay 301 and cacheable, which is the path
+/// the load tests measure. `tests/routes.rs` covers the anonymous side, and it has
+/// no session to create an owned code with.
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_owned_code_answers_302_so_its_clicks_keep_arriving(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = sign_up(&app).await;
+
+    let owned = app
+        .clone()
+        .oneshot(post_with_cookie(
+            "/v1/shorten",
+            &json!({ "url": "https://example.com/owned" }),
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    let owned: ShortenResponse = body_json(owned).await;
+
+    // The same URL claimed by nobody. A separate code, per the ownership split.
+    let anonymous = app
+        .clone()
+        .oneshot(post(
+            "/v1/shorten",
+            &json!({ "url": "https://example.com/anonymous" }),
+        ))
+        .await
+        .unwrap();
+    let anonymous: ShortenResponse = body_json(anonymous).await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{}", owned.code))
+                .header(header::USER_AGENT, "curl/8.7")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::FOUND,
+        "an owned code answering 301 would be cached and stop being counted"
+    );
+    assert_eq!(
+        response.headers().get(header::LOCATION).unwrap(),
+        "https://example.com/owned"
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{}", anonymous.code))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::MOVED_PERMANENTLY,
+        "an anonymous code has no dashboard, so it stays cacheable"
+    );
+    assert_eq!(
+        response.headers().get(header::LOCATION).unwrap(),
+        "https://example.com/anonymous"
+    );
+}

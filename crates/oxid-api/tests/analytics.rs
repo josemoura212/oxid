@@ -199,3 +199,84 @@ async fn a_code_never_sees_another_codes_clicks() {
 
     assert_eq!(summary.total, 1, "must not count the other code's click");
 }
+
+// --- the batching worker ---
+//
+// The worker is the one piece that can lose clicks without anyone noticing: it
+// buffers, and anything still buffered when the process ends is gone unless it
+// flushes. These pin the two moments a batch gets written that are not "the batch
+// filled up" — the timer, and shutdown.
+
+/// A trickle of clicks must not sit unwritten. One event is far short of a full
+/// batch, so only the flush interval can move it.
+#[tokio::test]
+async fn a_partial_batch_is_flushed_on_the_timer() {
+    let code_id = code_id(6);
+    let tx = oxid::analytics::spawn(sink().await);
+
+    tx.emit(event(code_id, at(2026, 7, 14, 10), 7));
+
+    // Longer than FLUSH_INTERVAL, plus room for ClickHouse to settle. The sender
+    // stays alive, so a write here can only have come from the timer.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    let range = DateRange {
+        from: at(2026, 7, 1, 0),
+        to: at(2026, 8, 1, 0),
+    };
+    let summary = sink().await.summary(code_id, range).await.unwrap();
+
+    assert_eq!(
+        summary.total, 1,
+        "the timer never flushed the partial batch"
+    );
+}
+
+/// Dropping the last sender is how shutdown reaches the worker. What is buffered
+/// at that moment has to be written, not discarded.
+#[tokio::test]
+async fn a_buffered_batch_is_flushed_when_the_senders_go_away() {
+    let code_id = code_id(7);
+    let tx = oxid::analytics::spawn(sink().await);
+
+    tx.emit(event(code_id, at(2026, 7, 15, 10), 8));
+    tx.emit(event(code_id, at(2026, 7, 15, 11), 9));
+
+    // The channel is closed by this, which is what makes `recv` answer `None`.
+    drop(tx);
+
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let range = DateRange {
+        from: at(2026, 7, 1, 0),
+        to: at(2026, 8, 1, 0),
+    };
+    let summary = sink().await.summary(code_id, range).await.unwrap();
+
+    assert_eq!(summary.total, 2, "shutdown discarded the buffered clicks");
+}
+
+/// With no backend there is no worker and no channel, and emitting is a branch and
+/// nothing more — the property that lets the load-test stages run the redirect with
+/// analytics contributing zero.
+#[tokio::test]
+async fn a_disabled_sink_spawns_no_worker() {
+    let tx = oxid::analytics::spawn(ClickSink::disabled());
+
+    // Would panic or block if it were feeding a real channel with no reader.
+    tx.emit(event(1, at(2026, 7, 1, 12), 1));
+    tx.emit(event(1, at(2026, 7, 1, 12), 1));
+
+    let summary = ClickSink::disabled()
+        .summary(
+            1,
+            DateRange {
+                from: at(2026, 7, 1, 0),
+                to: at(2026, 8, 1, 0),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(summary.total, 0);
+}

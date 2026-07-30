@@ -26,7 +26,7 @@ use oxid::{
     routes,
     state::AppState,
 };
-use oxid_shared::{AccountResponse, LinkPage};
+use oxid_shared::{AccountResponse, ClickStats, LinkPage, OverviewStats, ShortenResponse};
 use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -408,4 +408,148 @@ async fn a_signed_in_shorten_lands_in_the_owners_list(pool: PgPool) {
     let page: LinkPage = body_json(list).await;
     assert_eq!(page.links.len(), 1);
     assert_eq!(page.links[0].long_url, "https://example.com/mine");
+}
+
+// --- analytics dashboards ---
+//
+// The sink is disabled in this file, so these assert the *shape* the dashboards
+// depend on rather than click counts: the day axis, the density that makes the
+// front's index-for-index alignment correct, and who is allowed to read what.
+// `tests/analytics.rs` covers the counting against a real ClickHouse.
+
+/// The window's axis is inclusive at both ends: seven days back plus today.
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_overview_answers_a_dense_day_axis(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = sign_up(&app).await;
+
+    let response = app
+        .oneshot(get_with_cookie("/v1/urls/overview?days=7", &cookie))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let stats: OverviewStats = body_json(response).await;
+
+    assert_eq!(stats.days.len(), 8, "seven days back, plus today");
+    // No clicks recorded (the sink is disabled), so there is no line to draw.
+    assert!(stats.links.is_empty());
+}
+
+/// `days` is clamped to the 30-day ClickHouse TTL, so a longer ask cannot produce
+/// an axis reaching past data that no longer exists.
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_overview_clamps_the_window_to_the_ttl(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = sign_up(&app).await;
+
+    let response = app
+        .oneshot(get_with_cookie("/v1/urls/overview?days=9000", &cookie))
+        .await
+        .unwrap();
+
+    let stats: OverviewStats = body_json(response).await;
+    assert_eq!(stats.days.len(), 31, "30 days back, plus today");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_overview_needs_a_session(pool: PgPool) {
+    let app = app(pool).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/urls/overview")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The per-link series is dense too. A sparse one would draw a single bar across
+/// the whole window for a link clicked on one day.
+#[sqlx::test(migrations = "../../migrations")]
+async fn per_link_stats_are_dense_over_the_window(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = sign_up(&app).await;
+
+    let shorten = app
+        .clone()
+        .oneshot(post_with_cookie(
+            "/v1/shorten",
+            &json!({ "url": "https://example.com/measured" }),
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    let created: ShortenResponse = body_json(shorten).await;
+
+    let response = app
+        .oneshot(get_with_cookie(
+            &format!("/v1/urls/{}/stats?days=7", created.code),
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let stats: ClickStats = body_json(response).await;
+
+    assert_eq!(stats.series.len(), 8, "one point per day, gaps filled");
+    assert_eq!(stats.total, 0);
+    assert!(
+        stats.series.iter().all(|point| point.clicks == 0),
+        "no clicks were recorded"
+    );
+}
+
+/// A code that is not the caller's answers the same 404 as one that does not
+/// exist, so the endpoint cannot be used to probe which codes others own.
+#[sqlx::test(migrations = "../../migrations")]
+async fn per_link_stats_refuse_someone_elses_code(pool: PgPool) {
+    let app = app(pool).await;
+    let owner = sign_up(&app).await;
+
+    let shorten = app
+        .clone()
+        .oneshot(post_with_cookie(
+            "/v1/shorten",
+            &json!({ "url": "https://example.com/private" }),
+            &owner,
+        ))
+        .await
+        .unwrap();
+    let created: ShortenResponse = body_json(shorten).await;
+
+    // A second account, with no claim on that code.
+    let intruder = app
+        .clone()
+        .oneshot(post(
+            "/v1/signup",
+            &json!({ "email": "bruno@example.com", "password": PASSWORD }),
+        ))
+        .await
+        .unwrap();
+    let intruder = cookie_pair(&set_cookie(&intruder));
+
+    let response = app
+        .clone()
+        .oneshot(get_with_cookie(
+            &format!("/v1/urls/{}/stats", created.code),
+            &intruder,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // And the same answer for a code nobody owns, which is what makes the two
+    // indistinguishable.
+    let unknown = app
+        .oneshot(get_with_cookie("/v1/urls/zzzzzzz/stats", &intruder))
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
 }

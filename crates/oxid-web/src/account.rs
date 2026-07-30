@@ -1,7 +1,7 @@
 //! Sign in, sign up, and the links that belong to an account.
 
 use leptos::prelude::*;
-use oxid_shared::OwnedLink;
+use oxid_shared::{ClickPoint, ClickStats, OwnedLink};
 
 use crate::{api, i18n::Locale, storage::SavedLink};
 
@@ -504,9 +504,214 @@ pub fn AccountDialog(
     }
 }
 
+/// The windows the range tabs offer. Every one sits inside the 30-day ClickHouse
+/// TTL, so none of them ever asks for a stretch the server has already dropped.
+const STATS_WINDOWS: [u32; 4] = [7, 14, 21, 28];
+const DEFAULT_WINDOW: u32 = 7;
+
+/// The SVG coordinate space the bars are drawn in. The element itself is sized by
+/// CSS; these only fix the units, so the maths stays in whole numbers and the
+/// aspect ratio is stretched to fill whatever width the dialog gives it.
+const CHART_W: u64 = 320;
+const CHART_H: u64 = 96;
+/// Gap carved out of each day's slot, so neighbouring bars do not touch.
+const BAR_GAP: u64 = 3;
+
+/// The three states of the stats request. `None` in the signal means "not asked
+/// yet"; this covers only what happens once one is in flight.
+#[derive(Clone)]
+enum StatsState {
+    Loading,
+    Ready(ClickStats),
+    Failed,
+}
+
+/// One `<rect>` per day, each scaled against the busiest day in the window.
+///
+/// All whole-number and saturating: the lints deny bare `/` and `*` here as much
+/// as anywhere, and a chart is no reason to reach for `unwrap`. A day with no
+/// clicks draws a zero-height bar, which is simply invisible — the gap in the row
+/// is the information.
+fn chart(series: &[ClickPoint], aria: &'static str) -> impl IntoView {
+    let max = series.iter().map(|point| point.clicks).max().unwrap_or(0);
+    let count = u64::try_from(series.len()).unwrap_or(0);
+    let slot = CHART_W.checked_div(count).unwrap_or(CHART_W);
+    let bar_w = slot.saturating_sub(BAR_GAP).max(1);
+
+    let bars: Vec<_> = series
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            let offset = u64::try_from(index).unwrap_or(0);
+            let x = slot.saturating_mul(offset);
+            let height = point
+                .clicks
+                .saturating_mul(CHART_H)
+                .checked_div(max)
+                .unwrap_or(0);
+            let y = CHART_H.saturating_sub(height);
+            let day = point.at.get(0..10).unwrap_or(&point.at).to_owned();
+            let label = format!("{day} · {}", point.clicks);
+
+            view! {
+                <rect
+                    class="chart-bar"
+                    x=x.to_string()
+                    y=y.to_string()
+                    width=bar_w.to_string()
+                    height=height.to_string()
+                    rx="1.5"
+                >
+                    <title>{label}</title>
+                </rect>
+            }
+        })
+        .collect();
+
+    view! {
+        <svg
+            class="chart"
+            viewBox=format!("0 0 {CHART_W} {CHART_H}")
+            preserveAspectRatio="none"
+            role="img"
+            aria-label=aria
+        >
+            {bars}
+        </svg>
+    }
+}
+
+/// The per-link analytics dialog: total, unique, a window switch, and the daily
+/// bars. One instance for the whole list — `active` names the open link, or
+/// `None` when the dialog is shut.
+#[component]
+fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> impl IntoView {
+    let days = RwSignal::new(DEFAULT_WINDOW);
+    let state = RwSignal::new(None::<StatsState>);
+
+    let load = Action::new_local(move |(code, days): &(String, u32)| {
+        let code = code.clone();
+        let days = *days;
+        async move {
+            state.set(Some(StatsState::Loading));
+            match api::link_stats(&code, days).await {
+                Ok(stats) => state.set(Some(StatsState::Ready(stats))),
+                Err(error) => {
+                    leptos::logging::warn!("could not load link stats: {error}");
+                    state.set(Some(StatsState::Failed));
+                }
+            }
+        }
+    });
+
+    // Re-runs whenever the open link or the window changes, which is exactly when
+    // the numbers on screen have gone stale. Closing sets `active` to `None` and
+    // the guard bails, so shutting the dialog fires no request.
+    Effect::new(move |_| {
+        let Some(link) = active.get() else {
+            return;
+        };
+        load.dispatch((link.code, days.get()));
+    });
+
+    view! {
+        <Show when=move || active.get().is_some()>
+            <div class="dialog-veil" role="presentation" on:click=move |_| active.set(None)></div>
+
+            <div
+                class="dialog stats-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-label=move || locale.get().strings().stats_title
+            >
+                <div class="stats-head">
+                    <span class="stats-code">{move || active.get().map(|link| link.code)}</span>
+                    <span class="stats-url">
+                        <span class="stats-url-label">
+                            {move || locale.get().strings().stats_original}
+                        </span>
+                        {move || {
+                            active
+                                .get()
+                                .map(|link| crate::app::strip_scheme(&link.long_url).to_owned())
+                        }}
+                    </span>
+                </div>
+
+                <div class="stats-tabs" role="tablist">
+                    {STATS_WINDOWS
+                        .into_iter()
+                        .map(|window| {
+                            view! {
+                                <button
+                                    class="stats-tab"
+                                    class:active=move || days.get() == window
+                                    type="button"
+                                    role="tab"
+                                    aria-selected=move || {
+                                        if days.get() == window { "true" } else { "false" }
+                                    }
+                                    on:click=move |_| days.set(window)
+                                >
+                                    {format!("{window}d")}
+                                </button>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                </div>
+
+                <div class="stats-body">
+                    {move || {
+                        let strings = locale.get().strings();
+                        match state.get() {
+                            None | Some(StatsState::Loading) => {
+                                view! { <p class="stats-status">{strings.stats_loading}</p> }
+                                    .into_any()
+                            }
+                            Some(StatsState::Failed) => {
+                                view! { <p class="stats-status">{strings.stats_error}</p> }
+                                    .into_any()
+                            }
+                            Some(StatsState::Ready(stats)) if stats.total == 0 => {
+                                view! { <p class="stats-status">{strings.stats_empty}</p> }
+                                    .into_any()
+                            }
+                            Some(StatsState::Ready(stats)) => {
+                                view! {
+                                    <div class="stats-figures">
+                                        <span class="stats-total">{stats.total.to_string()}</span>
+                                        <span class="stats-total-label">{strings.stats_total}</span>
+                                        <span class="stats-unique">
+                                            {format!("{} {}", stats.unique, strings.stats_unique)}
+                                        </span>
+                                    </div>
+                                    {chart(&stats.series, strings.stats_title)}
+                                }
+                                    .into_any()
+                            }
+                        }
+                    }}
+                </div>
+
+                <button
+                    class="dialog-close"
+                    type="button"
+                    aria-label=move || locale.get().strings().close
+                    on:click=move |_| active.set(None)
+                >
+                    "×"
+                </button>
+            </div>
+        </Show>
+    }
+}
+
 /// The account's links, replacing the browser list once signed in.
 #[component]
 pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
+    // Names the link whose stats are open, `None` when the dialog is shut. Lifted
+    // to the list so one dialog serves every row instead of one per item.
+    let active = RwSignal::new(None::<OwnedLink>);
     let more = Action::new_local(move |(): &()| async move { account.load_more().await });
 
     view! {
@@ -543,6 +748,9 @@ pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
                             // Computed before the view so the full URL can move
                             // into `title` instead of being cloned for it.
                             let target = crate::app::strip_scheme(&link.long_url).to_owned();
+                            // Kept whole for the stats button, which needs the
+                            // code and destination the dialog shows.
+                            let full = link.clone();
                             view! {
                                 <li class="vault-item">
                                     <a
@@ -556,6 +764,15 @@ pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
                                     <span class="vault-target" title=link.long_url>
                                         {target}
                                     </span>
+                                    <button
+                                        class="vault-stats"
+                                        type="button"
+                                        aria-label=move || locale.get().strings().stats_open
+                                        title=move || locale.get().strings().stats_open
+                                        on:click=move |_| active.set(Some(full.clone()))
+                                    >
+                                        {move || locale.get().strings().stats_open}
+                                    </button>
                                 </li>
                             }
                         }
@@ -574,6 +791,8 @@ pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
                     {move || locale.get().strings().load_more}
                 </button>
             </Show>
+
+            <LinkStats active=active locale=locale />
         </section>
     }
 }

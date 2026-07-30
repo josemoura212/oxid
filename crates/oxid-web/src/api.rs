@@ -9,8 +9,8 @@
 
 use gloo_net::http::{Request, Response};
 use oxid_shared::{
-    AccountResponse, CredentialsRequest, ImportRequest, ImportResponse, LinkPage, ProblemDetails,
-    ShortenRequest, ShortenResponse,
+    AccountResponse, ClickStats, CredentialsRequest, ImportRequest, ImportResponse, LinkPage,
+    ProblemDetails, ShortenRequest, ShortenResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -125,4 +125,9 @@ pub async fn owned_links(cursor: Option<&str>) -> Result<LinkPage, String> {
 /// half happened.
 pub async fn import(urls: Vec<String>) -> Result<ImportResponse, String> {
     post("/v1/urls/import", &ImportRequest { urls }).await
+}
+
+/// Click analytics for one of the account's codes, over the last `days`.
+pub async fn link_stats(code: &str, days: u32) -> Result<ClickStats, String> {
+    get(&format!("/v1/urls/{code}/stats?days={days}")).await
 }

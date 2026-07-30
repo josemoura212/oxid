@@ -160,6 +160,16 @@ pub struct Strings {
     /// saying so is cheaper than answering the question later.
     pub import_note: &'static str,
     pub load_more: &'static str,
+
+    // Analytics.
+    pub stats_open: &'static str,
+    pub stats_title: &'static str,
+    pub stats_original: &'static str,
+    pub stats_total: &'static str,
+    pub stats_unique: &'static str,
+    pub stats_empty: &'static str,
+    pub stats_error: &'static str,
+    pub stats_loading: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -203,6 +213,14 @@ static EN: Strings = Strings {
     vault_account_empty: "No links in this account yet.",
     import_note: "Links saved in this browser were added to your account with new codes. The old links still work.",
     load_more: "Load more",
+    stats_open: "Stats",
+    stats_title: "Link data",
+    stats_original: "Original link:",
+    stats_total: "total clicks",
+    stats_unique: "unique",
+    stats_empty: "No clicks yet in this window.",
+    stats_error: "Could not load the stats.",
+    stats_loading: "Loading…",
 };
 
 static PT_BR: Strings = Strings {
@@ -246,6 +264,14 @@ static PT_BR: Strings = Strings {
     vault_account_empty: "Nenhum link nesta conta ainda.",
     import_note: "Os links salvos neste navegador entraram na sua conta com códigos novos. Os antigos continuam funcionando.",
     load_more: "Carregar mais",
+    stats_open: "Dados",
+    stats_title: "Dados do link",
+    stats_original: "Link original:",
+    stats_total: "cliques no total",
+    stats_unique: "únicos",
+    stats_empty: "Nenhum clique ainda nesta janela.",
+    stats_error: "Não foi possível carregar os dados.",
+    stats_loading: "Carregando…",
 };
 
 #[cfg(test)]

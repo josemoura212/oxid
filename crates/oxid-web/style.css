@@ -566,6 +566,127 @@ body {
   color: var(--fg);
 }
 
+/* Per-link analytics.
+ *
+ * The row already reserves a third column (the saved-list uses it for "remove");
+ * here it holds the button that opens the stats dialog for that link.
+ */
+.vault-stats {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted);
+  font: 0.72rem/1 var(--mono);
+  cursor: pointer;
+}
+
+.vault-stats:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+
+/* Wider than the credentials dialog: the bars need room to read as a series
+   rather than a smear. */
+.stats-dialog {
+  width: min(34rem, calc(100vw - 2rem));
+}
+
+.stats-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 1.25rem;
+}
+
+.stats-code {
+  font: 600 1.1rem/1 var(--mono);
+  color: var(--fg);
+}
+
+.stats-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.stats-url-label {
+  margin-right: 0.35rem;
+}
+
+.stats-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
+}
+
+.stats-tab {
+  flex: 1;
+  padding: 0.45rem 0;
+  border: 1px solid var(--edge);
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--muted);
+  font: 0.8rem/1 var(--mono);
+  cursor: pointer;
+}
+
+.stats-tab:hover {
+  color: var(--fg);
+}
+
+.stats-tab.active {
+  background: var(--accent-face);
+  color: var(--accent-ink);
+  border-color: var(--accent-face);
+}
+
+.stats-body {
+  min-height: 8rem;
+}
+
+.stats-figures {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.stats-total {
+  font: 700 2rem/1 var(--mono);
+  color: var(--accent-text);
+}
+
+.stats-total-label,
+.stats-unique {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.stats-unique {
+  margin-left: auto;
+}
+
+.stats-status {
+  margin: 0;
+  padding: 2rem 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: 6rem;
+}
+
+.chart-bar {
+  fill: var(--accent-face);
+}
+
 /* Account menu (top bar).
  *
  * The hamburger replaces the bare "sign out" button so both sign-out actions —

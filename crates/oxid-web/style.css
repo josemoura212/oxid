@@ -695,6 +695,12 @@ body {
   fill: var(--accent-face);
 }
 
+/* Brightens the day under the pointer, so the readout below is unambiguous about
+   which bar it is describing. */
+.chart-bar.active {
+  fill: var(--fg);
+}
+
 /* The overview's multi-line chart. Taller than the single-link bars so eight
    lines stay legible; the stroke width is fixed in screen pixels by
    non-scaling-stroke on the element, so the stretched viewBox does not fatten
@@ -708,11 +714,61 @@ body {
   fill: none;
 }
 
+/* One divider per day, faint enough to read as a grid rather than as data. */
+.chart-grid {
+  stroke: var(--edge);
+  stroke-width: 1;
+}
+
+/* The hover target for a day: transparent until the pointer is on it, at which
+   point it becomes the column highlight. `pointer-events: all` is what lets a
+   fill-less rect be hit at all. */
+.chart-hit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: crosshair;
+}
+
+.chart-hit.active {
+  fill: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+.chart-axis {
+  display: flex;
+  justify-content: space-between;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.axis-day {
+  font: 0.65rem/1 var(--mono);
+  color: var(--muted);
+}
+
+.axis-day.active {
+  color: var(--fg);
+}
+
+.chart-readout {
+  margin-top: 0.9rem;
+}
+
+/* Reserves its line whether or not a day is hovered, so the legend below does not
+   jump as the pointer crosses the chart. */
+.readout-day {
+  display: block;
+  min-height: 1rem;
+  font: 0.72rem/1 var(--mono);
+  color: var(--accent-text);
+}
+
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem 0.9rem;
-  margin: 0.9rem 0 0;
+  /* No top margin: the readout wrapper owns the spacing above it. */
+  margin: 0.35rem 0 0;
   padding: 0;
   list-style: none;
 }

@@ -3,7 +3,11 @@
 use leptos::prelude::*;
 use oxid_shared::{ClickPoint, ClickStats, OverviewLink, OverviewStats, OwnedLink};
 
-use crate::{api, i18n::Locale, storage::SavedLink};
+use crate::{
+    api,
+    i18n::{Locale, Strings},
+    storage::SavedLink,
+};
 
 /// Which form the dialog is showing. Two modes rather than two dialogs: the
 /// fields are identical and the only difference is where the submit goes.
@@ -519,11 +523,19 @@ const BAR_GAP: u64 = 3;
 
 /// One `<rect>` per day, each scaled against the busiest day in the window.
 ///
+/// The series arrives dense — one point per day, gaps filled with zeros — so each
+/// bar owns an equal slot and a quiet day is a visible gap rather than a bar the
+/// neighbours absorb.
+///
 /// All whole-number and saturating: the lints deny bare `/` and `*` here as much
-/// as anywhere, and a chart is no reason to reach for `unwrap`. A day with no
-/// clicks draws a zero-height bar, which is simply invisible — the gap in the row
-/// is the information.
-fn chart(series: &[ClickPoint], aria: &'static str) -> impl IntoView {
+/// as anywhere, and a chart is no reason to reach for `unwrap`. Each day also gets
+/// a transparent full-height column so hovering anywhere in it — not just on a
+/// one-pixel bar for a quiet day — reports the day through `hovered`.
+fn chart(
+    series: &[ClickPoint],
+    aria: &'static str,
+    hovered: RwSignal<Option<usize>>,
+) -> impl IntoView {
     let max = series.iter().map(|point| point.clicks).max().unwrap_or(0);
     let count = u64::try_from(series.len()).unwrap_or(0);
     let slot = CHART_W.checked_div(count).unwrap_or(CHART_W);
@@ -541,20 +553,32 @@ fn chart(series: &[ClickPoint], aria: &'static str) -> impl IntoView {
                 .checked_div(max)
                 .unwrap_or(0);
             let y = CHART_H.saturating_sub(height);
-            let day = point.at.get(0..10).unwrap_or(&point.at).to_owned();
-            let label = format!("{day} · {}", point.clicks);
 
             view! {
-                <rect
-                    class="chart-bar"
-                    x=x.to_string()
-                    y=y.to_string()
-                    width=bar_w.to_string()
-                    height=height.to_string()
-                    rx="1.5"
-                >
-                    <title>{label}</title>
-                </rect>
+                <g>
+                    <rect
+                        class="chart-bar"
+                        class:active=move || hovered.get() == Some(index)
+                        x=x.to_string()
+                        y=y.to_string()
+                        width=bar_w.to_string()
+                        height=height.to_string()
+                        rx="1.5"
+                    ></rect>
+                    // The full slot, not the bar's width: sized to the bar it
+                    // would leave the gap between bars dead, so the readout
+                    // would blank out as the pointer crossed it. Consecutive
+                    // slots tile exactly, with no overlap and no seam.
+                    <rect
+                        class="chart-hit"
+                        class:active=move || hovered.get() == Some(index)
+                        x=x.to_string()
+                        y="0"
+                        width=slot.max(1).to_string()
+                        height=CHART_H.to_string()
+                        on:mouseenter=move |_| hovered.set(Some(index))
+                    ></rect>
+                </g>
             }
         })
         .collect();
@@ -566,6 +590,12 @@ fn chart(series: &[ClickPoint], aria: &'static str) -> impl IntoView {
             preserveAspectRatio="none"
             role="img"
             aria-label=aria
+            // Cleared here rather than per column. A `mouseleave` on each column
+            // fires as the pointer crosses into the next one, so the selection
+            // would drop to `None` and come back on every boundary — one frame of
+            // blank readout per day crossed. Leaving the chart is the only moment
+            // there is genuinely no day under the pointer.
+            on:mouseleave=move |_| hovered.set(None)
         >
             {bars}
         </svg>
@@ -588,6 +618,8 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
     // Which link `stats` currently describes, so the effect can tell a window
     // change (keep the chart) from a link change (drop it).
     let shown = RwSignal::new(None::<String>);
+    // The day column under the pointer, read by the bars and the readout below.
+    let hovered = RwSignal::new(None::<usize>);
 
     let load = Action::new_local(move |(code, days): &(String, u32)| {
         let code = code.clone();
@@ -617,6 +649,10 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
             return;
         };
 
+        // A day index only means anything against the axis it came from, and both
+        // a new link and a new window are a new axis.
+        hovered.set(None);
+
         // A different link than the one on screen: drop its chart so it does not
         // flash under the new one. A mere window change leaves `stats` in place.
         if shown.get_untracked().as_deref() != Some(link.code.as_str()) {
@@ -629,13 +665,10 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
 
     view! {
         <Show when=move || active.get().is_some()>
-            <div class="dialog-veil" role="presentation" on:click=move |_| active.set(None)></div>
-
-            <div
-                class="dialog stats-dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-label=move || locale.get().strings().stats_title
+            <StatsShell
+                label=Signal::derive(move || locale.get().strings().stats_title.to_owned())
+                close_label=Signal::derive(move || locale.get().strings().close.to_owned())
+                close=Callback::new(move |()| active.set(None))
             >
                 <div class="stats-head">
                     <span class="stats-code">{move || active.get().map(|link| link.code)}</span>
@@ -651,27 +684,7 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                     </span>
                 </div>
 
-                <div class="stats-tabs" role="tablist">
-                    {STATS_WINDOWS
-                        .into_iter()
-                        .map(|window| {
-                            view! {
-                                <button
-                                    class="stats-tab"
-                                    class:active=move || days.get() == window
-                                    type="button"
-                                    role="tab"
-                                    aria-selected=move || {
-                                        if days.get() == window { "true" } else { "false" }
-                                    }
-                                    on:click=move |_| days.set(window)
-                                >
-                                    {format!("{window}d")}
-                                </button>
-                            }
-                        })
-                        .collect::<Vec<_>>()}
-                </div>
+                <RangeTabs days=days />
 
                 <div class="stats-body" class:is-loading=move || loading.get()>
                     {move || {
@@ -686,6 +699,12 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                                 }
                                     .into_any();
                             }
+                            let axis: Vec<String> = payload
+                                .series
+                                .iter()
+                                .map(|point| point.at.clone())
+                                .collect();
+
                             return view! {
                                 <div class="stats-figures">
                                     <span class="stats-total">{payload.total.to_string()}</span>
@@ -694,30 +713,19 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                                         {format!("{} {}", payload.unique, strings.stats_unique)}
                                     </span>
                                 </div>
-                                {chart(&payload.series, strings.stats_title)}
+                                {chart(&payload.series, strings.stats_title, hovered)}
+                                {day_axis(&axis, hovered)}
+                                {day_readout(&payload.series, strings, hovered)}
                             }
                                 .into_any();
                         }
 
                         // Nothing read yet for this link: the only time the empty
                         // states show, since after that a payload stays put.
-                        if failed.get() {
-                            view! { <p class="stats-status">{strings.stats_error}</p> }.into_any()
-                        } else {
-                            view! { <p class="stats-status">{strings.stats_loading}</p> }.into_any()
-                        }
+                        status_line(locale.get(), failed.get()).into_any()
                     }}
                 </div>
-
-                <button
-                    class="dialog-close"
-                    type="button"
-                    aria-label=move || locale.get().strings().close
-                    on:click=move |_| active.set(None)
-                >
-                    "×"
-                </button>
-            </div>
+            </StatsShell>
         </Show>
     }
 }
@@ -729,14 +737,121 @@ const LINE_COLORS: [&str; 8] = [
     "#d4693a", "#4f9d69", "#4a7fb5", "#b5544a", "#9a6fb0", "#c9a227", "#5aa9a3", "#8a8f98",
 ];
 
-/// A polyline per link over the shared day axis, plus a legend.
+/// The frame both analytics screens sit in: the click-away veil, the dialog box
+/// and the close button.
+///
+/// Extracted because the two screens had it verbatim, and a modal's semantics are
+/// exactly the kind of thing that drifts when copied — one dialog keeping its
+/// `aria-modal` while the other loses it is invisible until someone uses a screen
+/// reader. `close` is a callback rather than a signal because closing means
+/// different things to the callers: one clears which link is open, the other flips
+/// a boolean.
+#[component]
+fn StatsShell(
+    #[prop(into)] label: Signal<String>,
+    #[prop(into)] close_label: Signal<String>,
+    close: Callback<()>,
+    children: ChildrenFn,
+) -> impl IntoView {
+    view! {
+        <div
+            class="dialog-veil"
+            role="presentation"
+            on:click=move |_| close.run(())
+        ></div>
+
+        <div
+            class="dialog stats-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label=move || label.get()
+        >
+            {children()}
+
+            <button
+                class="dialog-close"
+                type="button"
+                aria-label=move || close_label.get()
+                on:click=move |_| close.run(())
+            >
+                "×"
+            </button>
+        </div>
+    }
+}
+
+/// The 7/14/21/28-day switch, shared by both analytics screens.
+///
+/// Extracted rather than repeated: the two dialogs offer the same windows for the
+/// same reason (the 30-day TTL), so a change to the set belongs in one place.
+#[component]
+fn RangeTabs(days: RwSignal<u32>) -> impl IntoView {
+    view! {
+        <div class="stats-tabs" role="tablist">
+            {STATS_WINDOWS
+                .into_iter()
+                .map(|window| {
+                    view! {
+                        <button
+                            class="stats-tab"
+                            class:active=move || days.get() == window
+                            type="button"
+                            role="tab"
+                            aria-selected=move || {
+                                if days.get() == window { "true" } else { "false" }
+                            }
+                            on:click=move |_| days.set(window)
+                        >
+                            {format!("{window}d")}
+                        </button>
+                    }
+                })
+                .collect::<Vec<_>>()}
+        </div>
+    }
+}
+
+/// The one-line placeholder both screens show before anything has been read: the
+/// error if the first fetch failed, otherwise the loading notice.
+fn status_line(locale: Locale, failed: bool) -> impl IntoView {
+    let strings = locale.strings();
+    let message = if failed {
+        strings.stats_error
+    } else {
+        strings.stats_loading
+    };
+
+    view! { <p class="stats-status">{message}</p> }
+}
+
+/// `dd/mm` out of an RFC 3339 day-start, by slice rather than a date parser.
+///
+/// The string is server-produced and always the same shape, and pulling in a
+/// wasm date library to read two fixed offsets out of it would cost more than the
+/// whole chart. `.get()` keeps it total: a malformed value renders empty instead
+/// of panicking.
+fn day_label(iso: &str) -> String {
+    let day = iso.get(8..10).unwrap_or("");
+    let month = iso.get(5..7).unwrap_or("");
+    format!("{day}/{month}")
+}
+
+/// A polyline per link over the shared day axis, split into day columns.
 ///
 /// Every link's `clicks` is the same length as the axis, so a point is just its
 /// index times the step — no date reconciling on this side. `non-scaling-stroke`
 /// keeps the lines crisp despite the stretched viewBox, and the colours ride on
 /// SVG presentation attributes rather than inline styles, so a strict CSP has
 /// nothing to forbid.
-fn overview_chart(links: &[OverviewLink], aria: &'static str) -> impl IntoView {
+///
+/// The transparent rect over each day is what makes hovering work: a polyline is
+/// a hairline and nearly impossible to hit with a pointer, so the whole column
+/// answers for its day and reports the index through `hovered`.
+fn overview_chart(
+    links: &[OverviewLink],
+    aria: &'static str,
+    hovered: RwSignal<Option<usize>>,
+) -> impl IntoView {
     let max = links
         .iter()
         .flat_map(|link| link.clicks.iter().copied())
@@ -750,6 +865,24 @@ fn overview_chart(links: &[OverviewLink], aria: &'static str) -> impl IntoView {
     } else {
         0
     };
+    let point_x = |index: usize| step.saturating_mul(u64::try_from(index).unwrap_or(0));
+
+    // One divider per day boundary, so the eye can tell which day a bend sits on.
+    let dividers: Vec<_> = (0..axis)
+        .map(|index| {
+            let x = point_x(index).to_string();
+            view! {
+                <line
+                    class="chart-grid"
+                    x1=x.clone()
+                    y1="0"
+                    x2=x
+                    y2=CHART_H.to_string()
+                    vector-effect="non-scaling-stroke"
+                />
+            }
+        })
+        .collect();
 
     let polylines: Vec<_> = links
         .iter()
@@ -761,7 +894,7 @@ fn overview_chart(links: &[OverviewLink], aria: &'static str) -> impl IntoView {
                 .iter()
                 .enumerate()
                 .map(|(index, clicks)| {
-                    let x = step.saturating_mul(u64::try_from(index).unwrap_or(0));
+                    let x = point_x(index);
                     let height = clicks.saturating_mul(CHART_H).checked_div(max).unwrap_or(0);
                     let y = CHART_H.saturating_sub(height);
                     format!("{x},{y}")
@@ -781,6 +914,27 @@ fn overview_chart(links: &[OverviewLink], aria: &'static str) -> impl IntoView {
         })
         .collect();
 
+    // Centred on the point, so the nearest day wins rather than the one to the
+    // right. Half a step at each edge, which is what `saturating_sub` gives for
+    // index 0 without a special case.
+    let half = step.checked_div(2).unwrap_or(0);
+    let columns: Vec<_> = (0..axis)
+        .map(|index| {
+            let x = point_x(index).saturating_sub(half);
+            view! {
+                <rect
+                    class="chart-hit"
+                    class:active=move || hovered.get() == Some(index)
+                    x=x.to_string()
+                    y="0"
+                    width=step.max(1).to_string()
+                    height=CHART_H.to_string()
+                    on:mouseenter=move |_| hovered.set(Some(index))
+                ></rect>
+            }
+        })
+        .collect();
+
     view! {
         <svg
             class="chart chart-multi"
@@ -788,35 +942,124 @@ fn overview_chart(links: &[OverviewLink], aria: &'static str) -> impl IntoView {
             preserveAspectRatio="none"
             role="img"
             aria-label=aria
+            // Same reason as the bar chart: per-column `mouseleave` would blank
+            // the legend for a frame on every boundary crossed.
+            on:mouseleave=move |_| hovered.set(None)
         >
+            {dividers}
             {polylines}
+            {columns}
         </svg>
     }
 }
 
-/// The legend under the overview chart: a swatch, the code, and its window total,
-/// one row per line, in the same rank order as the colours.
-fn overview_legend(links: &[OverviewLink]) -> impl IntoView {
+/// The day axis under a chart, one label per column. Shared by both screens.
+///
+/// Outside the SVG on purpose: the charts stretch with `preserveAspectRatio` none,
+/// which would squash text drawn inside them. The full `dd/mm` goes in the hover
+/// readout; the axis carries the day alone so eight of them fit.
+fn day_axis(days: &[String], hovered: RwSignal<Option<usize>>) -> impl IntoView {
+    let labels: Vec<_> = days
+        .iter()
+        .enumerate()
+        .map(|(index, iso)| {
+            let day = iso.get(8..10).unwrap_or("").to_owned();
+            view! {
+                <li class="axis-day" class:active=move || hovered.get() == Some(index)>
+                    {day}
+                </li>
+            }
+        })
+        .collect();
+
+    view! { <ul class="chart-axis">{labels}</ul> }
+}
+
+/// The hovered day and its exact count, for the single-link screen.
+///
+/// The aggregate screen puts the same information in its legend, where it has one
+/// row per line to fill; here there is only one number, so it reads as a sentence
+/// instead. Empty when nothing is hovered, and the slot keeps its height so the
+/// dialog does not resize under the pointer.
+fn day_readout(
+    series: &[ClickPoint],
+    strings: &'static Strings,
+    hovered: RwSignal<Option<usize>>,
+) -> impl IntoView {
+    let series = series.to_owned();
+
+    view! {
+        <div class="chart-readout">
+            <span class="readout-day">
+                {move || {
+                    hovered
+                        .get()
+                        .and_then(|index| series.get(index))
+                        .map(|point| {
+                            format!(
+                                "{} · {} {}",
+                                day_label(&point.at),
+                                point.clicks,
+                                strings.stats_day_clicks,
+                            )
+                        })
+                }}
+            </span>
+        </div>
+    }
+}
+
+/// The legend, doubling as the hover readout.
+///
+/// With no day hovered each row shows the link's total over the window; hovering a
+/// day swaps every row to that day's exact count, under a heading naming the day.
+/// One structure rather than a floating tooltip: a tooltip positioned over a
+/// stretched viewBox is fiddly, and the numbers are more readable in a fixed place
+/// than chasing the pointer.
+fn overview_legend(
+    links: &[OverviewLink],
+    days: &[String],
+    hovered: RwSignal<Option<usize>>,
+) -> impl IntoView {
     let items: Vec<_> = links
         .iter()
         .enumerate()
         .map(|(rank, link)| {
             let color = LINE_COLORS.get(rank).copied().unwrap_or("#8a8f98");
             let code = link.code.clone();
-            let total = link.total.to_string();
+            let total = link.total;
+            let clicks = link.clicks.clone();
             view! {
                 <li class="legend-item">
                     <svg class="legend-swatch" viewBox="0 0 10 10" aria-hidden="true">
                         <rect width="10" height="10" rx="2" fill=color></rect>
                     </svg>
                     <span class="legend-code">{code}</span>
-                    <span class="legend-total">{total}</span>
+                    <span class="legend-total">
+                        {move || {
+                            hovered
+                                .get()
+                                .map_or_else(
+                                    || total.to_string(),
+                                    |index| clicks.get(index).copied().unwrap_or(0).to_string(),
+                                )
+                        }}
+                    </span>
                 </li>
             }
         })
         .collect();
 
-    view! { <ul class="chart-legend">{items}</ul> }
+    let days = days.to_owned();
+
+    view! {
+        <div class="chart-readout">
+            <span class="readout-day">
+                {move || hovered.get().and_then(|index| days.get(index).map(|iso| day_label(iso)))}
+            </span>
+            <ul class="chart-legend">{items}</ul>
+        </div>
+    }
 }
 
 /// The aggregate dashboard: every one of the account's links on one axis. Opened
@@ -828,6 +1071,9 @@ fn OverviewChart(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView 
     let data = RwSignal::new(None::<OverviewStats>);
     let loading = RwSignal::new(false);
     let failed = RwSignal::new(false);
+    // Which day column the pointer is over, `None` when it is off the chart. The
+    // legend reads it to swap totals for that day's exact counts.
+    let hovered = RwSignal::new(None::<usize>);
 
     let load = Action::new_local(move |days: &u32| {
         let days = *days;
@@ -851,44 +1097,24 @@ fn OverviewChart(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView 
         if !open.get() {
             return;
         }
+        // A day index only means anything against the axis it came from, and a
+        // different window is a different axis.
+        hovered.set(None);
         load.dispatch(days.get());
     });
 
     view! {
         <Show when=move || open.get()>
-            <div class="dialog-veil" role="presentation" on:click=move |_| open.set(false)></div>
-
-            <div
-                class="dialog stats-dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-label=move || locale.get().strings().overview_title
+            <StatsShell
+                label=Signal::derive(move || locale.get().strings().overview_title.to_owned())
+                close_label=Signal::derive(move || locale.get().strings().close.to_owned())
+                close=Callback::new(move |()| open.set(false))
             >
                 <div class="stats-head">
                     <span class="stats-code">{move || locale.get().strings().overview_title}</span>
                 </div>
 
-                <div class="stats-tabs" role="tablist">
-                    {STATS_WINDOWS
-                        .into_iter()
-                        .map(|window| {
-                            view! {
-                                <button
-                                    class="stats-tab"
-                                    class:active=move || days.get() == window
-                                    type="button"
-                                    role="tab"
-                                    aria-selected=move || {
-                                        if days.get() == window { "true" } else { "false" }
-                                    }
-                                    on:click=move |_| days.set(window)
-                                >
-                                    {format!("{window}d")}
-                                </button>
-                            }
-                        })
-                        .collect::<Vec<_>>()}
-                </div>
+                <RangeTabs days=days />
 
                 <div class="stats-body" class:is-loading=move || loading.get()>
                     {move || {
@@ -901,29 +1127,17 @@ fn OverviewChart(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView 
                                     .into_any();
                             }
                             return view! {
-                                {overview_chart(&payload.links, strings.overview_title)}
-                                {overview_legend(&payload.links)}
+                                {overview_chart(&payload.links, strings.overview_title, hovered)}
+                                {day_axis(&payload.days, hovered)}
+                                {overview_legend(&payload.links, &payload.days, hovered)}
                             }
                                 .into_any();
                         }
 
-                        if failed.get() {
-                            view! { <p class="stats-status">{strings.stats_error}</p> }.into_any()
-                        } else {
-                            view! { <p class="stats-status">{strings.stats_loading}</p> }.into_any()
-                        }
+                        status_line(locale.get(), failed.get()).into_any()
                     }}
                 </div>
-
-                <button
-                    class="dialog-close"
-                    type="button"
-                    aria-label=move || locale.get().strings().close
-                    on:click=move |_| open.set(false)
-                >
-                    "×"
-                </button>
-            </div>
+            </StatsShell>
         </Show>
     }
 }

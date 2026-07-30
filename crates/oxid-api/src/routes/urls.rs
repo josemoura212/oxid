@@ -14,7 +14,14 @@ use serde::Deserialize;
 use sqlx::types::chrono::{DateTime, Utc};
 use url::Url;
 
-use crate::{analytics::DateRange, auth::Session, codec, error::AppError, repo, state::AppState};
+use crate::{
+    analytics::{DateRange, TimePoint},
+    auth::Session,
+    codec,
+    error::AppError,
+    repo,
+    state::AppState,
+};
 
 /// Page size ceiling. A client asking for more gets this — the limit exists to
 /// bound one query's work, so honouring a larger request would defeat it.
@@ -207,19 +214,25 @@ pub(super) async fn stats(
         .days
         .unwrap_or(DEFAULT_STATS_DAYS)
         .clamp(1, MAX_STATS_DAYS);
+    let range = window(days);
 
     let summary = state
         .clicks
-        .summary(code_id, window(days))
+        .summary(code_id, range)
         .await
         .map_err(|_| AppError::Internal("failed to read analytics"))?;
 
-    let series = summary
-        .series
-        .into_iter()
-        .map(|point| ClickPoint {
-            at: point.at.to_rfc3339(),
-            clicks: point.clicks,
+    // Densified onto the day grid, exactly like the overview. The query returns
+    // only the days that had clicks, so a link clicked once would otherwise arrive
+    // as a single point and draw as one bar spanning the whole window — a chart
+    // that reads as "every day was busy". A day with no clicks is a zero.
+    let grid = day_grid(range);
+    let series = grid
+        .iter()
+        .zip(align_to_grid(&grid, &summary.series))
+        .map(|(ts, clicks)| ClickPoint {
+            at: iso_day(*ts),
+            clicks,
         })
         .collect();
 
@@ -250,14 +263,7 @@ pub(super) async fn overview(
     // once so a day nobody clicked is a zero in every line rather than a gap one
     // line has and another does not.
     let grid = day_grid(range);
-    let days_iso: Vec<String> = grid
-        .iter()
-        .map(|ts| {
-            DateTime::from_timestamp(*ts, 0)
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_default()
-        })
-        .collect();
+    let days_iso: Vec<String> = grid.iter().map(|ts| iso_day(*ts)).collect();
 
     let code_ids =
         repo::list_owned_code_ids(&state.db_pool, session.user_id, MAX_OVERVIEW_FETCH).await?;
@@ -286,21 +292,10 @@ pub(super) async fn overview(
         let code = codec::shortcode(id)
             .ok_or(AppError::Internal("row id outside the shortcode domain"))?;
 
-        // Align this line's sparse days onto the shared grid.
-        let by_day: HashMap<i64, u64> = group
-            .series
-            .into_iter()
-            .map(|point| (point.at.timestamp(), point.clicks))
-            .collect();
-        let clicks = grid
-            .iter()
-            .map(|ts| by_day.get(ts).copied().unwrap_or(0))
-            .collect();
-
         links.push(OverviewLink {
             code,
             total: group.total,
-            clicks,
+            clicks: align_to_grid(&grid, &group.series),
         });
     }
 
@@ -308,6 +303,33 @@ pub(super) async fn overview(
         days: days_iso,
         links,
     }))
+}
+
+/// One day-start as RFC 3339 — the wire format both dashboards use for the axis.
+///
+/// A timestamp the calendar cannot represent renders empty rather than panicking.
+/// It cannot happen for a window bounded by `now`, but the total form costs a line.
+fn iso_day(ts: i64) -> String {
+    DateTime::from_timestamp(ts, 0)
+        .map(|at| at.to_rfc3339())
+        .unwrap_or_default()
+}
+
+/// Aligns a sparse daily series onto `grid`, every missing day filled with zero.
+///
+/// Both dashboards need this and for the same reason: ClickHouse returns only the
+/// days that had clicks, and a series with holes cannot be drawn against a shared
+/// axis by index. Living in one place means the invariant the tests assert — one
+/// entry per grid day, in grid order — has a single implementation to hold it.
+fn align_to_grid(grid: &[i64], series: &[TimePoint]) -> Vec<u64> {
+    let by_day: HashMap<i64, u64> = series
+        .iter()
+        .map(|point| (point.at.timestamp(), point.clicks))
+        .collect();
+
+    grid.iter()
+        .map(|ts| by_day.get(ts).copied().unwrap_or(0))
+        .collect()
 }
 
 /// The window's day-start timestamps, oldest first — the axis every line shares.
@@ -327,4 +349,119 @@ fn day_grid(range: DateRange) -> Vec<i64> {
         at = at.saturating_add(DAY_SECONDS);
     }
     grid
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::types::chrono::{TimeZone, Utc};
+
+    use super::{DAY_SECONDS, DateRange, TimePoint, align_to_grid, day_grid, iso_day, window};
+
+    fn at(y: i32, m: u32, d: u32, h: u32) -> sqlx::types::chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
+    }
+
+    /// The axis is inclusive at both ends and one entry per day, which is what
+    /// makes the front's index-for-index alignment correct. A 7-day window covers
+    /// 8 day-starts: seven days back, plus today.
+    #[test]
+    fn the_grid_is_dense_and_inclusive() {
+        let grid = day_grid(DateRange {
+            from: at(2026, 7, 23, 13),
+            to: at(2026, 7, 30, 9),
+        });
+
+        assert_eq!(grid.len(), 8);
+        assert_eq!(grid.first().copied(), Some(at(2026, 7, 23, 0).timestamp()));
+        assert_eq!(grid.last().copied(), Some(at(2026, 7, 30, 0).timestamp()));
+
+        // Every step is exactly a day, so no bucket can land between two entries.
+        for pair in grid.windows(2) {
+            let (a, b) = (pair.first().copied(), pair.get(1).copied());
+            assert_eq!(
+                b.zip(a).map(|(b, a)| b.saturating_sub(a)),
+                Some(DAY_SECONDS)
+            );
+        }
+    }
+
+    /// Both ends inside one day collapse to that single day rather than to an
+    /// empty axis — an empty one would give the front nothing to draw against.
+    #[test]
+    fn a_single_day_window_has_one_entry() {
+        let grid = day_grid(DateRange {
+            from: at(2026, 7, 30, 1),
+            to: at(2026, 7, 30, 23),
+        });
+
+        assert_eq!(grid, vec![at(2026, 7, 30, 0).timestamp()]);
+    }
+
+    /// The window the handler asks for spans exactly `days` days, and never runs
+    /// backwards.
+    #[test]
+    fn the_window_spans_the_requested_days() {
+        let range = window(7);
+        let span = range.to.timestamp().saturating_sub(range.from.timestamp());
+
+        assert_eq!(span, 7 * DAY_SECONDS);
+        assert!(range.from < range.to);
+    }
+
+    /// The invariant both dashboards rest on: one entry per grid day, in grid
+    /// order, gaps filled with zero. Without it the front's index-for-index
+    /// alignment silently attributes a click to the wrong day.
+    #[test]
+    fn alignment_fills_the_gaps_and_keeps_the_order() {
+        let grid = day_grid(DateRange {
+            from: at(2026, 7, 27, 0),
+            to: at(2026, 7, 30, 0),
+        });
+        assert_eq!(grid.len(), 4);
+
+        // Clicks on the second and fourth days only, and deliberately out of
+        // order — the query sorts, but the alignment must not depend on it.
+        let series = vec![
+            TimePoint {
+                at: at(2026, 7, 30, 0),
+                clicks: 5,
+            },
+            TimePoint {
+                at: at(2026, 7, 28, 0),
+                clicks: 2,
+            },
+        ];
+
+        assert_eq!(align_to_grid(&grid, &series), vec![0, 2, 0, 5]);
+    }
+
+    /// A day outside the window is dropped rather than shifted onto a neighbour.
+    #[test]
+    fn alignment_ignores_days_off_the_grid() {
+        let grid = day_grid(DateRange {
+            from: at(2026, 7, 29, 0),
+            to: at(2026, 7, 30, 0),
+        });
+
+        let series = vec![
+            TimePoint {
+                at: at(2026, 7, 1, 0),
+                clicks: 99,
+            },
+            TimePoint {
+                at: at(2026, 7, 30, 0),
+                clicks: 1,
+            },
+        ];
+
+        assert_eq!(align_to_grid(&grid, &series), vec![0, 1]);
+    }
+
+    #[test]
+    fn a_day_start_renders_as_rfc_3339() {
+        assert_eq!(
+            iso_day(at(2026, 7, 30, 0).timestamp()),
+            "2026-07-30T00:00:00+00:00"
+        );
+    }
 }

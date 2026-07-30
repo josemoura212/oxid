@@ -172,6 +172,10 @@ pub struct Strings {
     pub stats_loading: &'static str,
     pub overview_open: &'static str,
     pub overview_title: &'static str,
+    /// Distinct from `stats_total`: that one labels the window's whole count,
+    /// this one labels a single day in the hover readout, where "total" would
+    /// be plainly wrong.
+    pub stats_day_clicks: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -225,6 +229,7 @@ static EN: Strings = Strings {
     stats_loading: "Loading…",
     overview_open: "Overview",
     overview_title: "All your links",
+    stats_day_clicks: "clicks this day",
 };
 
 static PT_BR: Strings = Strings {
@@ -278,6 +283,7 @@ static PT_BR: Strings = Strings {
     stats_loading: "Carregando…",
     overview_open: "Dados gerais",
     overview_title: "Todos os seus links",
+    stats_day_clicks: "cliques neste dia",
 };
 
 #[cfg(test)]

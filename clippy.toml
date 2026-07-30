@@ -5,3 +5,7 @@ type-complexity-threshold = 250
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true
+
+# Product and ClickHouse type names that read as camel-case identifiers to the
+# `doc_markdown` lint. `..` keeps clippy's built-in list (GitHub, OAuth, …).
+doc-valid-idents = ["ClickHouse", "MergeTree", "LowCardinality", ".."]

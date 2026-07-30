@@ -81,15 +81,14 @@ async fn resolve_returns_the_shortened_url(pool: PgPool) {
     let url = "https://example.com/roundtrip";
     let code_id = shorten_anon(&pool, url).await.unwrap();
 
-    assert_eq!(
-        repo::resolve_code(&pool, code_id).await.unwrap(),
-        Some(url.to_owned())
-    );
+    let resolved = repo::resolve_code(&pool, code_id).await.unwrap().unwrap();
+    assert_eq!(resolved.long_url, url);
+    assert!(!resolved.owned, "an anonymous code must resolve as unowned");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn resolve_of_unknown_id_returns_none(pool: PgPool) {
-    assert_eq!(repo::resolve_code(&pool, 999_999).await.unwrap(), None);
+    assert!(repo::resolve_code(&pool, 999_999).await.unwrap().is_none());
 }
 
 /// URLs with a backslash broke when the hash used `long_url::bytea`.
@@ -102,8 +101,12 @@ async fn url_with_backslash_is_accepted(pool: PgPool) {
 
     assert_eq!(first, second);
     assert_eq!(
-        repo::resolve_code(&pool, first).await.unwrap(),
-        Some(url.to_owned())
+        repo::resolve_code(&pool, first)
+            .await
+            .unwrap()
+            .unwrap()
+            .long_url,
+        url
     );
 }
 
@@ -149,11 +152,15 @@ async fn two_owners_share_the_url_row_but_not_the_code(pool: PgPool) {
 
     assert_ne!(ana_code, bruno_code, "owners must not share a code");
 
-    // Both still resolve to the same destination, from one stored URL.
-    assert_eq!(
-        repo::resolve_code(&pool, ana_code).await.unwrap(),
-        repo::resolve_code(&pool, bruno_code).await.unwrap()
-    );
+    // Both still resolve to the same destination, from one stored URL — and both
+    // read as owned.
+    let ana_resolved = repo::resolve_code(&pool, ana_code).await.unwrap().unwrap();
+    let bruno_resolved = repo::resolve_code(&pool, bruno_code)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ana_resolved.long_url, bruno_resolved.long_url);
+    assert!(ana_resolved.owned && bruno_resolved.owned);
 
     let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM urls")
         .fetch_one(&pool)
@@ -312,4 +319,41 @@ async fn pagination_walks_every_row_once(pool: PgPool) {
     }
 
     assert_eq!(seen.len(), 25);
+}
+
+/// The overview's id source: an owner's own codes, newest first, capped.
+#[sqlx::test(migrations = "../../migrations")]
+async fn owned_code_ids_are_the_owners_newest_first(pool: PgPool) {
+    let ana = make_user(&pool, "ana@example.com").await.unwrap().unwrap();
+    let bruno = make_user(&pool, "bruno@example.com")
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut ana_codes = Vec::new();
+    for n in 0..3 {
+        let url_id = repo::upsert_url(&pool, &format!("https://example.com/{n}"))
+            .await
+            .unwrap();
+        ana_codes.push(repo::upsert_code(&pool, url_id, Some(ana)).await.unwrap());
+    }
+
+    // One for bruno and one anonymous, on a shared URL — neither belongs in ana's
+    // list.
+    let shared = repo::upsert_url(&pool, "https://example.com/shared")
+        .await
+        .unwrap();
+    repo::upsert_code(&pool, shared, Some(bruno)).await.unwrap();
+    repo::upsert_code(&pool, shared, None).await.unwrap();
+
+    let ids = repo::list_owned_code_ids(&pool, ana, 50).await.unwrap();
+
+    // Only ana's three, and newest first — the reverse of insertion order.
+    let mut expected = ana_codes.clone();
+    expected.reverse();
+    assert_eq!(ids, expected);
+
+    // The limit caps the list to the newest.
+    let capped = repo::list_owned_code_ids(&pool, ana, 2).await.unwrap();
+    assert_eq!(capped.as_slice(), &expected[..2]);
 }

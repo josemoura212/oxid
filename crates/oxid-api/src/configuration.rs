@@ -17,6 +17,7 @@ pub struct Settings {
     pub cache: CacheSettings,
     pub rate_limit: RateLimitSettings,
     pub session: SessionSettings,
+    pub analytics: AnalyticsSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,6 +118,63 @@ impl CacheSettings {
 
     pub const fn connect_timeout(&self) -> Duration {
         Duration::from_secs(self.connect_timeout_seconds)
+    }
+}
+
+/// Where click events go.
+///
+/// `off` is not a placeholder — it is the state the load-test stages run in, so
+/// analytics never contaminates a latency measurement, the same reason
+/// `Cache::disabled()` exists. The ClickHouse settings are only read when the
+/// backend selects it, hence `#[serde(default)]`: an `off` deployment does not
+/// have to carry a connection block it never uses.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnalyticsSettings {
+    pub backend: AnalyticsBackend,
+    #[serde(default)]
+    pub clickhouse: ClickHouseSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AnalyticsBackend {
+    Off,
+    ClickHouse,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickHouseSettings {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub password: SecretString,
+    pub database: String,
+}
+
+/// Written by hand rather than derived: `SecretString` has no `Default`, and
+/// this default is only ever the placeholder for an `off` backend that never
+/// reads it.
+impl Default for ClickHouseSettings {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: 0,
+            user: String::new(),
+            password: SecretString::from(String::new()),
+            database: String::new(),
+        }
+    }
+}
+
+impl ClickHouseSettings {
+    /// The HTTP interface URL. Plain HTTP on purpose: ClickHouse sits inside the
+    /// cluster reachable only by the API, the same posture as Postgres and Redis.
+    pub fn url(&self) -> String {
+        format!("http://{}:{}", self.host, self.port)
+    }
+
+    pub fn password(&self) -> &str {
+        self.password.expose_secret()
     }
 }
 

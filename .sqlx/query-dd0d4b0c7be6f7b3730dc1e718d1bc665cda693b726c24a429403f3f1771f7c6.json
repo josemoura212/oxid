@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT u.long_url, (sc.owner_id IS NOT NULL) AS \"owned!\"\n        FROM short_codes sc\n        JOIN urls u ON u.id = sc.url_id\n        WHERE sc.id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "long_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "urls",
+            "name": "long_url"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "owned!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "dd0d4b0c7be6f7b3730dc1e718d1bc665cda693b726c24a429403f3f1771f7c6"
+}

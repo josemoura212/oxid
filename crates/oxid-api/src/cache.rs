@@ -3,17 +3,34 @@ use redis::{AsyncCommands, Client, ExistenceCheck, SetExpiry, SetOptions, aio::C
 use crate::configuration::CacheSettings;
 
 /// Namespace prefix, so a future key type cannot collide with a shortcode.
-const KEY_PREFIX: &str = "u:";
+///
+/// Bumped to `u2:` when the stored value gained an ownership flag (stage 12): the
+/// old `u:` entries hold a bare URL and would be misread under the new format, so
+/// a new namespace abandons them to LRU and repopulates. The cache is disposable,
+/// so this is a format bump, not a migration.
+const KEY_PREFIX: &str = "u2:";
 
 /// Marks "no URL is registered under this code". Cannot be mistaken for a real
-/// value because every stored URL is `http`/`https`, checked at write time.
+/// value because a stored positive value always begins with an ownership flag.
 const MISSING: &str = "\u{0}";
+
+/// First character of a stored positive value: this code has an owner.
+const OWNED_FLAG: char = '1';
+/// First character of a stored positive value: this code is anonymous.
+const ANON_FLAG: char = '0';
 
 /// What the cache knows about a code. `None` from [`Cache::get`] means the cache
 /// has no opinion — go ask Postgres.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cached {
-    Url(String),
+    Url {
+        long_url: String,
+        /// Whether the code has an owner. Immutable — a per-owner code is owned
+        /// or anonymous at creation and never changes — so it lives in the cache
+        /// value with no invalidation. It decides 301 vs 302 and whether the
+        /// redirect records a click.
+        owned: bool,
+    },
     Missing,
 }
 
@@ -103,22 +120,46 @@ impl Cache {
                 metrics::counter!("cache_lookups_total", "outcome" => "hit_negative").increment(1);
                 Some(Cached::Missing)
             }
-            Some(url) => {
+            Some(value) => {
+                // The stored value is a one-character ownership flag followed by
+                // the URL. `strip_prefix` avoids indexing (denied) and, if the
+                // value somehow has neither flag — a stray old-format entry — it
+                // reads as a miss rather than serving a corrupt URL.
+                let cached = value
+                    .strip_prefix(OWNED_FLAG)
+                    .map(|url| (url, true))
+                    .or_else(|| value.strip_prefix(ANON_FLAG).map(|url| (url, false)));
+
+                let Some((long_url, owned)) = cached else {
+                    tracing::warn!(code, "cache value missing its ownership flag");
+                    metrics::counter!("cache_lookups_total", "outcome" => "miss").increment(1);
+                    return None;
+                };
+
                 tracing::debug!(code, cache = "hit", "cache lookup");
                 metrics::counter!("cache_lookups_total", "outcome" => "hit").increment(1);
-                Some(Cached::Url(url))
+                Some(Cached::Url {
+                    long_url: long_url.to_owned(),
+                    owned,
+                })
             }
         }
     }
 
     /// No TTL: the mapping is immutable, so the entry can never go stale.
     /// Eviction is Redis's job, via `maxmemory` + `allkeys-lru`.
-    pub async fn set_url(&self, code: &str, long_url: &str) {
+    ///
+    /// The value is the ownership flag then the URL, so a read learns both in one
+    /// round trip and the redirect never touches Postgres to decide 301 vs 302.
+    pub async fn set_url(&self, code: &str, long_url: &str, owned: bool) {
         let Some(mut conn) = self.conn.clone() else {
             return;
         };
 
-        if let Err(err) = conn.set::<_, _, ()>(key(code), long_url).await {
+        let flag = if owned { OWNED_FLAG } else { ANON_FLAG };
+        let value = format!("{flag}{long_url}");
+
+        if let Err(err) = conn.set::<_, _, ()>(key(code), value).await {
             tracing::warn!(%err, code, "cache write failed");
         }
     }

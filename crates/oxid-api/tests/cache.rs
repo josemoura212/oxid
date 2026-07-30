@@ -46,7 +46,7 @@ async fn raw() -> redis::aio::MultiplexedConnection {
 
 async fn clear(code: &str) {
     let mut conn = raw().await;
-    let _: () = conn.del(format!("u:{code}")).await.unwrap();
+    let _: () = conn.del(format!("u2:{code}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -57,11 +57,14 @@ async fn stores_and_reads_back_a_url() {
     let cache = cache().await;
     assert_eq!(cache.get(code).await, None, "should start empty");
 
-    cache.set_url(code, "https://example.com/a").await;
+    cache.set_url(code, "https://example.com/a", false).await;
 
     assert_eq!(
         cache.get(code).await,
-        Some(Cached::Url("https://example.com/a".to_owned()))
+        Some(Cached::Url {
+            long_url: "https://example.com/a".to_owned(),
+            owned: false
+        })
     );
 }
 
@@ -89,12 +92,14 @@ async fn positive_entries_never_expire_and_negative_ones_do() {
     clear(negative).await;
 
     let cache = cache().await;
-    cache.set_url(positive, "https://example.com/b").await;
+    cache
+        .set_url(positive, "https://example.com/b", false)
+        .await;
     cache.set_missing(negative).await;
 
     let mut conn = raw().await;
-    let positive_ttl: i64 = conn.ttl(format!("u:{positive}")).await.unwrap();
-    let negative_ttl: i64 = conn.ttl(format!("u:{negative}")).await.unwrap();
+    let positive_ttl: i64 = conn.ttl(format!("u2:{positive}")).await.unwrap();
+    let negative_ttl: i64 = conn.ttl(format!("u2:{negative}")).await.unwrap();
 
     assert_eq!(positive_ttl, -1, "positive entry must not expire");
     assert!(
@@ -120,12 +125,17 @@ async fn a_negative_write_never_overwrites_a_positive_one() {
 
     let cache = cache().await;
 
-    cache.set_url(code, "https://example.com/winner").await;
+    cache
+        .set_url(code, "https://example.com/winner", false)
+        .await;
     cache.set_missing(code).await;
 
     assert_eq!(
         cache.get(code).await,
-        Some(Cached::Url("https://example.com/winner".to_owned())),
+        Some(Cached::Url {
+            long_url: "https://example.com/winner".to_owned(),
+            owned: false
+        }),
         "the negative write clobbered the URL"
     );
 }
@@ -140,7 +150,11 @@ async fn the_positive_survives_concurrent_writes() {
     let writer = cache.clone();
 
     let (positive, negative) = tokio::join!(
-        async { writer.set_url(code, "https://example.com/winner").await },
+        async {
+            writer
+                .set_url(code, "https://example.com/winner", false)
+                .await;
+        },
         async {
             tokio::time::sleep(Duration::from_millis(5)).await;
             cache.set_missing(code).await;
@@ -150,7 +164,10 @@ async fn the_positive_survives_concurrent_writes() {
 
     assert_eq!(
         cache.get(code).await,
-        Some(Cached::Url("https://example.com/winner".to_owned()))
+        Some(Cached::Url {
+            long_url: "https://example.com/winner".to_owned(),
+            owned: false
+        })
     );
 }
 
@@ -160,12 +177,12 @@ async fn a_disabled_cache_stores_nothing_and_knows_nothing() {
     clear(code).await;
 
     let cache = Cache::disabled();
-    cache.set_url(code, "https://example.com/c").await;
+    cache.set_url(code, "https://example.com/c", false).await;
 
     assert_eq!(cache.get(code).await, None);
 
     // And nothing reached Redis either.
     let mut conn = raw().await;
-    let stored: Option<String> = conn.get(format!("u:{code}")).await.unwrap();
+    let stored: Option<String> = conn.get(format!("u2:{code}")).await.unwrap();
     assert_eq!(stored, None);
 }

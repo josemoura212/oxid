@@ -81,6 +81,13 @@ pub fn router(state: Arc<AppState>, rate_limit: RateLimitSettings) -> anyhow::Re
         // Which is exactly why it needs its own ceiling. Requiring a session is
         // not a limit — an account is free, and one call can be a hundred writes.
         .route("/v1/urls/import", post(urls::import).layer(expensive_limit))
+        // The aggregate dashboard: every one of the caller's links at once. A
+        // literal segment, so it wins over `{code}` below and never resolves as a
+        // shortcode.
+        .route("/v1/urls/overview", get(urls::overview))
+        // Click analytics for one owned code. Under `/v1/urls/` so it never
+        // collides with a shortcode, which lives at the root.
+        .route("/v1/urls/{code}/stats", get(urls::stats))
         // The redirect sits at the root: `/{code}` is the product. Prefixing it
         // with `/v1/urls/` would spend 9 characters on a URL whose whole point is
         // being short. Literal routes win over the parameter, so `/health` and

@@ -54,3 +54,16 @@ session:
   # and forgotten does not stay useful indefinitely. Fixed rather than sliding —
   # see `SessionSettings`.
   ttl_seconds: 604800
+
+analytics:
+  # "off" quoted on purpose: unquoted, YAML reads off/on/yes/no as booleans, and
+  # `off` would become `false` instead of the string the enum expects. Off is the
+  # default because the load-test stages run with analytics contributing nothing,
+  # and because a plain boot should not require ClickHouse to be up. Local and
+  # production turn it on.
+  backend: "off"
+  clickhouse:
+    host: localhost
+    port: 8123
+    user: oxid
+    database: oxid

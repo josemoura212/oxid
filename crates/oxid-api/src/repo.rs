@@ -87,14 +87,24 @@ pub async fn upsert_code(
     .await
 }
 
-/// Resolves a code id to its destination.
+#[derive(Debug)]
+pub struct Resolved {
+    pub long_url: String,
+    /// Whether the code has an owner. Decides 301 vs 302 and whether the redirect
+    /// records a click — carried out of the same query so the redirect learns it
+    /// without a second round trip.
+    pub owned: bool,
+}
+
+/// Resolves a code id to its destination and ownership.
 ///
 /// One join, both sides by primary key. The cache absorbs almost all of this
 /// path, so the extra hop costs nothing at the volumes that matter.
-pub async fn resolve_code(pool: &PgPool, code_id: i64) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar!(
+pub async fn resolve_code(pool: &PgPool, code_id: i64) -> Result<Option<Resolved>, sqlx::Error> {
+    sqlx::query_as!(
+        Resolved,
         r#"
-        SELECT u.long_url
+        SELECT u.long_url, (sc.owner_id IS NOT NULL) AS "owned!"
         FROM short_codes sc
         JOIN urls u ON u.id = sc.url_id
         WHERE sc.id = $1
@@ -103,6 +113,27 @@ pub async fn resolve_code(pool: &PgPool, code_id: i64) -> Result<Option<String>,
     )
     .fetch_optional(pool)
     .await
+}
+
+/// Whether this code exists and belongs to this owner.
+///
+/// The dashboard uses it to refuse a code that is not the caller's — answering
+/// the same 404 as a code that does not exist, so it cannot be used to probe
+/// which codes other people own.
+pub async fn owns_code(pool: &PgPool, code_id: i64, owner_id: i64) -> Result<bool, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        r#"
+        SELECT 1 AS "one!"
+        FROM short_codes
+        WHERE id = $1 AND owner_id = $2
+        "#,
+        code_id,
+        owner_id
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(found.is_some())
 }
 
 pub struct Credentials {
@@ -230,6 +261,33 @@ pub async fn list_owned(
         owner_id,
         cursor_at,
         cursor_id,
+        limit
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Just the ids of an owner's codes, newest first, for the overview.
+///
+/// The overview asks ClickHouse for the daily series of every one of these at
+/// once, so the `limit` here bounds the `IN` list that query builds — not the
+/// number of lines the chart ends up drawing, which the handler trims further by
+/// click volume. Newest-first so a capped fetch keeps the links most likely to
+/// still be in the 30-day analytics window.
+pub async fn list_owned_code_ids(
+    pool: &PgPool,
+    owner_id: i64,
+    limit: i64,
+) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT id
+        FROM short_codes
+        WHERE owner_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT $2
+        "#,
+        owner_id,
         limit
     )
     .fetch_all(pool)

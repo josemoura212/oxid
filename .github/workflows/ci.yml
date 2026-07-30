@@ -78,6 +78,24 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.3-alpine
+        env:
+          CLICKHOUSE_USER: oxid
+          CLICKHOUSE_PASSWORD: oxid
+          CLICKHOUSE_DB: oxid
+        ports:
+          - 8123:8123
+        # 127.0.0.1, not localhost — localhost resolves to ::1 and ClickHouse
+        # binds IPv4 only, so the probe would be refused forever. More retries
+        # than Postgres and Redis because ClickHouse takes longer to accept
+        # connections on a cold start.
+        options: >-
+          --health-cmd "wget --spider -q http://127.0.0.1:8123/ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
     env:
       # Compile against the committed cache. Without this the macros see
       # DATABASE_URL and validate against the live database instead — which is
@@ -93,6 +111,7 @@ jobs:
       # temporary database per test, and SQLX_OFFLINE does not affect it.
       DATABASE_URL: postgres://oxid:oxid@localhost:5432/oxid
       OXID_TEST_REDIS: redis://127.0.0.1:6379
+      OXID_TEST_CLICKHOUSE: 127.0.0.1:8123
 
     steps:
       - uses: actions/checkout@v7

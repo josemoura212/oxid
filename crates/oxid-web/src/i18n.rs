@@ -141,6 +141,7 @@ pub struct Strings {
     pub sign_in: &'static str,
     pub sign_out: &'static str,
     pub sign_out_all: &'static str,
+    pub account_menu: &'static str,
     pub sign_up: &'static str,
     pub email_label: &'static str,
     pub password_label: &'static str,
@@ -159,6 +160,22 @@ pub struct Strings {
     /// saying so is cheaper than answering the question later.
     pub import_note: &'static str,
     pub load_more: &'static str,
+
+    // Analytics.
+    pub stats_open: &'static str,
+    pub stats_title: &'static str,
+    pub stats_original: &'static str,
+    pub stats_total: &'static str,
+    pub stats_unique: &'static str,
+    pub stats_empty: &'static str,
+    pub stats_error: &'static str,
+    pub stats_loading: &'static str,
+    pub overview_open: &'static str,
+    pub overview_title: &'static str,
+    /// Distinct from `stats_total`: that one labels the window's whole count,
+    /// this one labels a single day in the hover readout, where "total" would
+    /// be plainly wrong.
+    pub stats_day_clicks: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -186,6 +203,7 @@ static EN: Strings = Strings {
     sign_in: "Sign in",
     sign_out: "Sign out",
     sign_out_all: "Sign out of all devices",
+    account_menu: "Account menu",
     sign_up: "Create account",
     email_label: "Email",
     password_label: "Password",
@@ -201,6 +219,17 @@ static EN: Strings = Strings {
     vault_account_empty: "No links in this account yet.",
     import_note: "Links saved in this browser were added to your account with new codes. The old links still work.",
     load_more: "Load more",
+    stats_open: "Stats",
+    stats_title: "Link data",
+    stats_original: "Original link:",
+    stats_total: "total clicks",
+    stats_unique: "unique",
+    stats_empty: "No clicks yet in this window.",
+    stats_error: "Could not load the stats.",
+    stats_loading: "Loading…",
+    overview_open: "Overview",
+    overview_title: "All your links",
+    stats_day_clicks: "clicks this day",
 };
 
 static PT_BR: Strings = Strings {
@@ -228,6 +257,7 @@ static PT_BR: Strings = Strings {
     sign_in: "Entrar",
     sign_out: "Sair",
     sign_out_all: "Sair de todos os dispositivos",
+    account_menu: "Menu da conta",
     sign_up: "Criar conta",
     email_label: "E-mail",
     password_label: "Senha",
@@ -243,6 +273,17 @@ static PT_BR: Strings = Strings {
     vault_account_empty: "Nenhum link nesta conta ainda.",
     import_note: "Os links salvos neste navegador entraram na sua conta com códigos novos. Os antigos continuam funcionando.",
     load_more: "Carregar mais",
+    stats_open: "Dados",
+    stats_title: "Dados do link",
+    stats_original: "Link original:",
+    stats_total: "cliques no total",
+    stats_unique: "únicos",
+    stats_empty: "Nenhum clique ainda nesta janela.",
+    stats_error: "Não foi possível carregar os dados.",
+    stats_loading: "Carregando…",
+    overview_open: "Dados gerais",
+    overview_title: "Todos os seus links",
+    stats_day_clicks: "cliques neste dia",
 };
 
 #[cfg(test)]

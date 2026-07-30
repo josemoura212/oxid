@@ -72,8 +72,13 @@ pub(super) async fn shorten(
         codec::shortcode(id).ok_or(AppError::Internal("row id outside the shortcode domain"))?;
 
     // Populate on write, not only on read miss: whoever just created the link is
-    // about to click it, so this turns a guaranteed miss into a hit.
-    state.cache.set_url(&code, long_url).await;
+    // about to click it, so this turns a guaranteed miss into a hit. The cached
+    // value carries whether the code has an owner, so the redirect decides 301
+    // vs 302 without a database hit.
+    state
+        .cache
+        .set_url(&code, long_url, owner_id.is_some())
+        .await;
 
     let short_url = format!("{}/{code}", state.base_url.trim_end_matches('/'));
 

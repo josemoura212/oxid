@@ -74,6 +74,48 @@ pub struct LinkPage {
     pub next_cursor: Option<String>,
 }
 
+/// Click analytics for one of the owner's links, over a time window.
+///
+/// Timestamps are RFC 3339 strings, like [`OwnedLink::created_at`] — the wire
+/// contract stays free of a date library, and the front formats them itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickStats {
+    pub total: u64,
+    /// Distinct visitors — `uniq(visitor_hash)` on the server.
+    pub unique: u64,
+    pub series: Vec<ClickPoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickPoint {
+    /// Start of the day this bucket counts, RFC 3339.
+    pub at: String,
+    pub clicks: u64,
+}
+
+/// The aggregate screen: every one of the owner's links on one day axis.
+///
+/// The axis is shared and dense — one entry per day in the window — so each
+/// link's `clicks` lines up index-for-index with `days` and the front can draw a
+/// line per link without reconciling different date sets. The server fills the
+/// gaps with zeros; a day nobody clicked is a zero, not a missing point.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverviewStats {
+    /// Day-starts over the window, RFC 3339, oldest first.
+    pub days: Vec<String>,
+    /// One line per link, ranked so the busiest come first.
+    pub links: Vec<OverviewLink>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverviewLink {
+    pub code: String,
+    /// Clicks over the whole window — what the links are ranked by.
+    pub total: u64,
+    /// Clicks per day, the same length and order as [`OverviewStats::days`].
+    pub clicks: Vec<u64>,
+}
+
 /// Most URLs one import call will take.
 ///
 /// Bounded because the alternative is a single request that walks an unbounded

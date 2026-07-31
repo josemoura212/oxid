@@ -84,6 +84,32 @@ pub struct ClickStats {
     /// Distinct visitors — `uniq(visitor_hash)` on the server.
     pub unique: u64,
     pub series: Vec<ClickPoint>,
+    /// Where the clicks came from, ranked. Rides along in the same response
+    /// rather than on its own endpoint: the dashboard shows it beside the total,
+    /// so a second round trip would only buy a second loading state.
+    #[serde(default)]
+    pub breakdown: ClickBreakdown,
+}
+
+/// The ranked dimensions under a link's chart.
+///
+/// Bots are counted but kept out of the lists. "Top countries" is a question
+/// about people, and for a shortener the crawlers are not a rounding error — a
+/// link pasted into a group chat is fetched by the platform before anyone opens
+/// it. The count stays visible so the exclusion is legible rather than a silent
+/// discrepancy between this and `total`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClickBreakdown {
+    pub bots: u64,
+    pub countries: Vec<ClickSlice>,
+    pub devices: Vec<ClickSlice>,
+    pub referrers: Vec<ClickSlice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickSlice {
+    pub value: String,
+    pub clicks: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

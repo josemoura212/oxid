@@ -7,7 +7,14 @@ use axum::{
 };
 use sqlx::types::chrono::Utc;
 
-use crate::{analytics::ClickEvent, cache::Cached, codec, error::AppError, repo, state::AppState};
+use crate::{
+    analytics::{self, ClickEvent},
+    cache::Cached,
+    codec,
+    error::AppError,
+    repo,
+    state::AppState,
+};
 
 /// A malformed code answers 404, not 400. Answering 400 for bad syntax and 404
 /// for well-formed-but-missing would leak the shortcode format to anyone probing
@@ -77,17 +84,24 @@ fn finish(
     // was never decoded, and the bijection inverse is a single modular multiply.
     // Only owned codes reach this, so it runs on the minority of redirects.
     if let Some(id) = codec::resolve(code).and_then(|id| i64::try_from(id).ok()) {
+        // Substring scans over one header, and only for codes that have a
+        // dashboard to feed. The work happens before `emit`, which is a `try_send`
+        // — so a saturated queue drops an event that was already built, rather
+        // than the redirect paying to build one it then throws away. That is the
+        // right way round: the cost is bounded and small, and moving it into the
+        // worker would mean shipping the raw headers through the channel.
+        let agent = analytics::agent(user_agent(headers));
+
         state.clicks_tx.emit(ClickEvent {
             created_at: Utc::now(),
             code_id: id,
-            // Enrichment (country, device, referer, language) is a later slice.
-            country: String::new(),
-            device: String::new(),
-            os: String::new(),
-            browser: String::new(),
-            referer_host: String::new(),
-            lang: String::new(),
-            is_bot: 0,
+            country: analytics::country(headers),
+            device: agent.device.to_owned(),
+            os: agent.os.to_owned(),
+            browser: agent.browser.to_owned(),
+            referer_host: analytics::referer_host(headers),
+            lang: analytics::lang(headers),
+            is_bot: agent.is_bot,
             visitor_hash: visitor_hash(headers),
         });
     }
@@ -96,6 +110,18 @@ fn finish(
     // be counted. The cost — a request per click instead of one then silence — is
     // the point of counting.
     Ok((StatusCode::FOUND, [(header::LOCATION, location)]).into_response())
+}
+
+/// The raw `User-Agent`, empty when absent or not valid UTF-8.
+///
+/// Read once per click and used twice — the visitor hash folds it in, and the
+/// enrichment classifies it — so it is a function rather than two lookups that
+/// could drift apart on what "absent" means.
+fn user_agent(headers: &HeaderMap) -> &str {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
 }
 
 /// A per-visitor, per-day identifier that stores nobody's address.
@@ -108,22 +134,19 @@ fn finish(
 /// restarts — which is what lets `uniq()` count one visitor as one. It is not a
 /// cryptographic secret; a keyed daily salt is a later refinement.
 fn visitor_hash(headers: &HeaderMap) -> u64 {
-    let header = |name: &str| {
-        headers
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-    };
-
-    // First hop of X-Forwarded-For is the client the CDN saw; fall back to
-    // X-Real-IP. Absent both (a direct request), the empty string still yields a
-    // stable-per-UA value.
-    let ip = header("x-forwarded-for")
+    // First hop of X-Forwarded-For is the client the CDN saw. Correct only
+    // because Traefik trusts Cloudflare's ranges — without that it is a per-request
+    // edge address, which made this count one visitor per click until 2026-07-31.
+    // See `docs/infra/cluster.md`.
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
         .split(',')
         .next()
         .unwrap_or("")
         .trim();
-    let user_agent = header("user-agent");
+    let user_agent = user_agent(headers);
     let day = Utc::now().format("%Y-%m-%d").to_string();
 
     // `write` the bytes with a separator between, rather than `Hash::hash` each

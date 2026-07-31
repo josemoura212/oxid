@@ -14,9 +14,11 @@
 //! This module is the inert foundation — types, the sink enum, and the schema.
 //! Nothing writes yet; the batching worker and the hot-path emit come next.
 
+mod enrich;
 mod sink;
 mod worker;
 
+pub use enrich::{Agent, agent, country, lang, referer_host};
 pub use sink::{ClickSink, SinkError};
 pub use worker::{ClickTx, spawn};
 
@@ -94,6 +96,26 @@ impl Summary {
             series: Vec::new(),
         }
     }
+}
+
+/// One row of a ranked list: a value and how many clicks carried it.
+#[derive(Debug, Clone, Serialize)]
+pub struct Slice {
+    pub value: String,
+    pub clicks: u64,
+}
+
+/// The ranked dimensions for one code over a range.
+///
+/// Bots are counted separately and excluded from the lists — see
+/// `oxid_shared::ClickBreakdown` for why that is a product decision rather than a
+/// filter someone happened to add.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Breakdown {
+    pub bots: u64,
+    pub countries: Vec<Slice>,
+    pub devices: Vec<Slice>,
+    pub referrers: Vec<Slice>,
 }
 
 /// One code's line for the overview.

@@ -584,11 +584,18 @@ range 7/14/21/28d). Ambas saem do mesmo `summary()` — a única diferença é o
       enriquecimento acima
 
 🎯 Um clique aparece no dashboard sem que o p95 do redirect se mova.
-   **Metade verificada**: o clique aparece — comprovado em produção em 2026-07-30, com o
-   pipeline inteiro (302 → emit → lote → ClickHouse → dashboard). O p95 **não foi medido
-   de novo** desde que a analytics entrou no ar, então a segunda metade da meta continua
-   sendo afirmação, não número. Fechar isso é repetir a corrida da Etapa 9 com
-   `analytics.backend = clickhouse` e comparar com a linha de base em `off`.
+   **Verificada nas duas metades.** O clique aparece — comprovado em produção em
+   2026-07-30, com o pipeline inteiro (302 → emit → lote → ClickHouse → dashboard). E o
+   p95 não se move: A/B em 2026-07-31, quatro execuções alternando `off` e `clickhouse`,
+   binário release, 4.000 req/s sobre 2.000 códigos **com dono** — anônimo não emite, e
+   medir com ele compararia a analytics com ela mesma.
+
+   O resultado exige leitura honesta: com a analytics **ligada** o p95 ficou *menor* nas
+   duas amostras (371 e 358 µs contra 409 e 385 µs). Isso não pode ser causal. O ruído
+   entre execuções da mesma condição é de ~24 µs, a diferença aparente é da mesma ordem e
+   com o sinal invertido — assinatura de efeito que o instrumento não resolve. O que se
+   pode afirmar é que o custo está **abaixo de ~24 µs contra um p95 de ~370-410 µs**, não
+   que a analytics é de graça. Detalhes e ressalvas em `docs/ETAPA-12-P95.md`.
 🦀 Canal `mpsc` com backpressure, task de background, batch de escrita.
 
 ### Onde gravar o evento — as duas implementações, trocadas por config

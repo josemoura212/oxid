@@ -14,9 +14,11 @@
 //! This module is the inert foundation — types, the sink enum, and the schema.
 //! Nothing writes yet; the batching worker and the hot-path emit come next.
 
+mod enrich;
 mod sink;
 mod worker;
 
+pub use enrich::{Agent, agent, country, lang, referer_host};
 pub use sink::{ClickSink, SinkError};
 pub use worker::{ClickTx, spawn};
 

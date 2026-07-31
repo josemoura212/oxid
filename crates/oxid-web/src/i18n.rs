@@ -176,6 +176,13 @@ pub struct Strings {
     /// this one labels a single day in the hover readout, where "total" would
     /// be plainly wrong.
     pub stats_day_clicks: &'static str,
+    pub top_countries: &'static str,
+    pub top_devices: &'static str,
+    pub top_referrers: &'static str,
+    pub direct_traffic: &'static str,
+    /// Named rather than folded into the totals: the number is only meaningful
+    /// if someone can see it was excluded.
+    pub bots_excluded: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -230,6 +237,11 @@ static EN: Strings = Strings {
     overview_open: "Overview",
     overview_title: "All your links",
     stats_day_clicks: "clicks this day",
+    top_countries: "Countries",
+    top_devices: "Devices",
+    top_referrers: "Referrers",
+    direct_traffic: "No referrer yet.",
+    bots_excluded: "bots, not counted above",
 };
 
 static PT_BR: Strings = Strings {
@@ -284,6 +296,11 @@ static PT_BR: Strings = Strings {
     overview_open: "Dados gerais",
     overview_title: "Todos os seus links",
     stats_day_clicks: "cliques neste dia",
+    top_countries: "Países",
+    top_devices: "Dispositivos",
+    top_referrers: "Origens",
+    direct_traffic: "Nenhuma origem ainda.",
+    bots_excluded: "bots, não contados acima",
 };
 
 #[cfg(test)]

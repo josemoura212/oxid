@@ -7,15 +7,15 @@ use axum::{
     extract::{Path, Query, State, rejection::JsonRejection},
 };
 use oxid_shared::{
-    ClickPoint, ClickStats, ImportRequest, ImportResponse, LinkPage, MAX_IMPORT, MAX_URL_LEN,
-    OverviewLink, OverviewStats, OwnedLink,
+    ClickBreakdown, ClickPoint, ClickSlice, ClickStats, ImportRequest, ImportResponse, LinkPage,
+    MAX_IMPORT, MAX_URL_LEN, OverviewLink, OverviewStats, OwnedLink,
 };
 use serde::Deserialize;
 use sqlx::types::chrono::{DateTime, Utc};
 use url::Url;
 
 use crate::{
-    analytics::{DateRange, TimePoint},
+    analytics::{self, DateRange, TimePoint},
     auth::Session,
     codec,
     error::AppError,
@@ -39,6 +39,11 @@ const DAY_SECONDS: i64 = 86_400;
 /// How many of an owner's codes the overview pulls from Postgres — the size of
 /// the `IN` list the ClickHouse query then builds.
 const MAX_OVERVIEW_FETCH: i64 = 50;
+
+/// How many rows each ranked list shows. Five is what fits beside a chart
+/// without the lists becoming the screen; the tail is not interesting anyway,
+/// since a shortener's traffic concentrates hard.
+const MAX_BREAKDOWN: u8 = 5;
 
 /// How many lines the overview chart actually draws, the busiest first. Beyond a
 /// handful a multi-line chart stops being readable, so the rest are folded away
@@ -236,11 +241,40 @@ pub(super) async fn stats(
         })
         .collect();
 
+    // Sequential rather than concurrent on purpose: both hit the same ClickHouse,
+    // and the node running it also runs Postgres, Redis, the API replicas and the
+    // front end. Two queries racing buy milliseconds on a dashboard nobody is
+    // holding a stopwatch to, and cost a second connection on a machine with none
+    // to spare.
+    let breakdown = state
+        .clicks
+        .breakdown(code_id, range, MAX_BREAKDOWN)
+        .await
+        .map_err(|_| AppError::Internal("failed to read analytics"))?;
+
     Ok(Json(ClickStats {
         total: summary.total,
         unique: summary.unique,
         series,
+        breakdown: ClickBreakdown {
+            bots: breakdown.bots,
+            countries: slices(breakdown.countries),
+            devices: slices(breakdown.devices),
+            referrers: slices(breakdown.referrers),
+        },
     }))
+}
+
+/// The wire shape of a ranked list. A function rather than three inline `map`s,
+/// which is all this saves — but the three would have been identical, and the
+/// duplication detector is right that identical is worth naming.
+fn slices(rows: Vec<analytics::Slice>) -> Vec<ClickSlice> {
+    rows.into_iter()
+        .map(|row| ClickSlice {
+            value: row.value,
+            clicks: row.clicks,
+        })
+        .collect()
 }
 
 /// The aggregate screen: every one of the caller's links on one shared day axis.

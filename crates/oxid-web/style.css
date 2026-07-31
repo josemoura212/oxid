@@ -754,6 +754,83 @@ body {
   margin-top: 0.9rem;
 }
 
+/* The three ranked lists. Auto-fit rather than three fixed columns: with only
+   one list worth showing it takes the full width instead of leaving two gaps,
+   and on a phone they stack without a media query. */
+.ranks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--edge);
+}
+
+.rank-title {
+  margin: 0 0 0.5rem;
+  font: 600 0.7rem/1 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The bar is positioned behind the text rather than beside it, so a long value
+   keeps the full width to be read in and the ratio still shows through. */
+.rank-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.25rem;
+  font: 0.75rem/1.3 var(--mono);
+}
+
+.rank-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--accent-face) 22%, transparent);
+}
+
+.rank-value,
+.rank-count {
+  position: relative;
+}
+
+.rank-value {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+.rank-count {
+  color: var(--muted);
+}
+
+.rank-empty {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.rank-bots {
+  margin: 1rem 0 0;
+  font: 0.72rem/1 var(--mono);
+  color: var(--muted);
+}
+
 /* Reserves its line whether or not a day is hovered, so the legend below does not
    jump as the pointer crosses the chart. */
 .readout-day {

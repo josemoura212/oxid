@@ -1,7 +1,9 @@
 //! Sign in, sign up, and the links that belong to an account.
 
 use leptos::prelude::*;
-use oxid_shared::{ClickPoint, ClickStats, OverviewLink, OverviewStats, OwnedLink};
+use oxid_shared::{
+    ClickBreakdown, ClickPoint, ClickSlice, ClickStats, OverviewLink, OverviewStats, OwnedLink,
+};
 
 use crate::{
     api,
@@ -716,6 +718,7 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                                 {chart(&payload.series, strings.stats_title, hovered)}
                                 {day_axis(&axis, hovered)}
                                 {day_readout(&payload.series, strings, hovered)}
+                                {breakdown_view(&payload.breakdown, strings)}
                             }
                                 .into_any();
                         }
@@ -727,6 +730,96 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                 </div>
             </StatsShell>
         </Show>
+    }
+}
+
+/// One ranked list — a heading and its rows, each with a bar sized against the
+/// busiest row.
+///
+/// The bar is a plain `div` width, not a chart: the values are already sorted, so
+/// the bar exists to make the ratio between first and fifth readable at a glance
+/// rather than to be measured. `None` for an empty list, so the caller can leave
+/// the column out instead of rendering an empty heading.
+fn ranked_list(title: &'static str, rows: &[ClickSlice], empty: Option<&'static str>) -> AnyView {
+    if rows.is_empty() {
+        return empty.map_or_else(
+            || ().into_any(),
+            |message| {
+                view! {
+                    <div class="rank">
+                        <h3 class="rank-title">{title}</h3>
+                        <p class="rank-empty">{message}</p>
+                    </div>
+                }
+                .into_any()
+            },
+        );
+    }
+
+    let max = rows.iter().map(|row| row.clicks).max().unwrap_or(0).max(1);
+
+    let items: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            // Percentage of the busiest row, floored — whole-number arithmetic,
+            // like the charts, and a zero-width bar is simply not drawn.
+            let width = row.clicks.saturating_mul(100).checked_div(max).unwrap_or(0);
+            // Two owned copies: the attribute and the text node each take one, and
+            // a referrer host is short enough that cloning it is cheaper than
+            // threading a shared handle through the view macro.
+            let value = row.value.clone();
+            let title = row.value.clone();
+            let clicks = row.clicks.to_string();
+
+            view! {
+                <li class="rank-row">
+                    <span class="rank-bar" style=format!("width:{width}%")></span>
+                    <span class="rank-value" title=title>{value}</span>
+                    <span class="rank-count">{clicks}</span>
+                </li>
+            }
+        })
+        .collect();
+
+    view! {
+        <div class="rank">
+            <h3 class="rank-title">{title}</h3>
+            <ul class="rank-list">{items}</ul>
+        </div>
+    }
+    .into_any()
+}
+
+/// The three ranked lists under a link's chart, plus the bot count.
+///
+/// The bot line is shown even at zero-ish volumes on purpose. For a shortener the
+/// crawlers are not noise — a link pasted into a group chat is fetched by the
+/// platform before anyone opens it — so a total that excludes them needs the
+/// exclusion visible, or the lists look like they disagree with the total.
+fn breakdown_view(breakdown: &ClickBreakdown, strings: &'static Strings) -> impl IntoView {
+    // A plain `if`, not `<Show>`: this whole view is rebuilt when a payload
+    // arrives, so there is nothing here to react to. `<Show>` would also have to
+    // be written around the comparison, because `>` inside the view macro closes
+    // the tag it is in.
+    let bots = if breakdown.bots > 0 {
+        let count = breakdown.bots;
+        view! { <p class="rank-bots">{format!("{count} {}", strings.bots_excluded)}</p> }.into_any()
+    } else {
+        ().into_any()
+    };
+
+    view! {
+        <div class="ranks">
+            {ranked_list(strings.top_countries, &breakdown.countries, None)}
+            {ranked_list(strings.top_devices, &breakdown.devices, None)}
+            {ranked_list(
+                strings.top_referrers,
+                &breakdown.referrers,
+                Some(strings.direct_traffic),
+            )}
+        </div>
+
+        {bots}
     }
 }
 

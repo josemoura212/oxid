@@ -10,7 +10,7 @@ use clickhouse::{Client, Row};
 use serde::Deserialize;
 use sqlx::types::chrono::DateTime;
 
-use super::{ClickEvent, DateRange, SCHEMA, SeriesGroup, Summary, TimePoint};
+use super::{Breakdown, ClickEvent, DateRange, SCHEMA, SeriesGroup, Slice, Summary, TimePoint};
 use crate::configuration::{AnalyticsBackend, AnalyticsSettings};
 
 /// The totals row. Column order, not field names, has to match the SELECT — the
@@ -34,6 +34,15 @@ struct Bucket {
 struct GroupBucket {
     code_id: i64,
     at: u32,
+    clicks: u64,
+}
+
+/// One row of the breakdown, labelled with the dimension it came from — the
+/// column that lets three rankings share one query.
+#[derive(Row, Deserialize)]
+struct Ranked {
+    dimension: String,
+    value: String,
     clicks: u64,
 }
 
@@ -197,6 +206,106 @@ impl ClickSink {
                     unique: totals.unique,
                     series,
                 })
+            }
+        }
+    }
+
+    /// The ranked dimensions for one code: countries, devices, referrers.
+    ///
+    /// One round trip for all three, not three. The `UNION ALL` labels each row
+    /// with the dimension it came from, and `LIMIT n BY dimension` — a ClickHouse
+    /// extension, not standard SQL — keeps the top `n` *within each group* rather
+    /// than the top `n` overall. Without it, one popular country would fill the
+    /// whole result and the device list would come back empty.
+    ///
+    /// Bots are excluded from the lists and counted on their own. Empty values are
+    /// dropped too: a click with no `Referer` is the normal case, not a referrer
+    /// called "".
+    pub async fn breakdown(
+        &self,
+        code_id: i64,
+        range: DateRange,
+        limit: u8,
+    ) -> Result<Breakdown, SinkError> {
+        match self {
+            Self::Disabled => Ok(Breakdown::default()),
+            Self::ClickHouse(client) => {
+                let from = range.from.timestamp();
+                let to = range.to.timestamp();
+
+                let bots = client
+                    .query(
+                        "SELECT count() FROM click_events \
+                         WHERE code_id = ? \
+                           AND created_at >= fromUnixTimestamp(?) \
+                           AND created_at <  fromUnixTimestamp(?) \
+                           AND is_bot = 1",
+                    )
+                    .bind(code_id)
+                    .bind(from)
+                    .bind(to)
+                    .fetch_one::<u64>()
+                    .await?;
+
+                let rows = client
+                    .query(
+                        "SELECT dimension, value, clicks FROM ( \
+                             SELECT 'country' AS dimension, country AS value, count() AS clicks \
+                             FROM click_events \
+                             WHERE code_id = ? AND created_at >= fromUnixTimestamp(?) \
+                               AND created_at < fromUnixTimestamp(?) AND is_bot = 0 AND country != '' \
+                             GROUP BY value \
+                             UNION ALL \
+                             SELECT 'device' AS dimension, device AS value, count() AS clicks \
+                             FROM click_events \
+                             WHERE code_id = ? AND created_at >= fromUnixTimestamp(?) \
+                               AND created_at < fromUnixTimestamp(?) AND is_bot = 0 AND device != '' \
+                             GROUP BY value \
+                             UNION ALL \
+                             SELECT 'referer' AS dimension, referer_host AS value, count() AS clicks \
+                             FROM click_events \
+                             WHERE code_id = ? AND created_at >= fromUnixTimestamp(?) \
+                               AND created_at < fromUnixTimestamp(?) AND is_bot = 0 AND referer_host != '' \
+                             GROUP BY value \
+                         ) ORDER BY dimension, clicks DESC, value LIMIT ? BY dimension",
+                    )
+                    .bind(code_id)
+                    .bind(from)
+                    .bind(to)
+                    .bind(code_id)
+                    .bind(from)
+                    .bind(to)
+                    .bind(code_id)
+                    .bind(from)
+                    .bind(to)
+                    .bind(limit)
+                    .fetch_all::<Ranked>()
+                    .await?;
+
+                let mut breakdown = Breakdown {
+                    bots,
+                    ..Breakdown::default()
+                };
+
+                for row in rows {
+                    let slice = Slice {
+                        value: row.value,
+                        clicks: row.clicks,
+                    };
+
+                    match row.dimension.as_str() {
+                        "country" => breakdown.countries.push(slice),
+                        "device" => breakdown.devices.push(slice),
+                        "referer" => breakdown.referrers.push(slice),
+                        // The query is the only producer of this column, so an
+                        // unknown label means the SELECT and this match drifted
+                        // apart. Dropping the row keeps the dashboard honest
+                        // rather than filing it under the wrong heading.
+                        _ => {}
+                    }
+                }
+
+                Ok(breakdown)
             }
         }
     }

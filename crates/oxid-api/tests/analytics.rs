@@ -57,6 +57,26 @@ fn code_id(n: i64) -> i64 {
         .saturating_add(n)
 }
 
+/// An enriched event, for the breakdown. `bot` is what decides whether it counts
+/// as a person, which is the whole point of the column.
+fn rich(
+    code_id: i64,
+    when: DateTime<Utc>,
+    visitor: u64,
+    country: &str,
+    device: &str,
+    referer: &str,
+    bot: u8,
+) -> ClickEvent {
+    ClickEvent {
+        country: country.to_owned(),
+        device: device.to_owned(),
+        referer_host: referer.to_owned(),
+        is_bot: bot,
+        ..event(code_id, when, visitor)
+    }
+}
+
 fn event(code_id: i64, when: DateTime<Utc>, visitor: u64) -> ClickEvent {
     ClickEvent {
         created_at: when,
@@ -279,4 +299,111 @@ async fn a_disabled_sink_spawns_no_worker() {
         .unwrap();
 
     assert_eq!(summary.total, 0);
+}
+
+// --- the ranked breakdown ---
+
+/// Three rankings from one query, and the rule that makes them mean something:
+/// bots are counted but never listed. For a shortener that is not a detail — a
+/// link pasted into a group chat is fetched by the platform before anyone opens
+/// it, so "top countries" would otherwise rank the crawlers' exit nodes.
+#[tokio::test]
+async fn the_breakdown_ranks_people_and_counts_bots_apart() {
+    let sink = sink().await;
+    let code_id = code_id(8);
+    let when = at(2026, 7, 16, 10);
+
+    sink.record(&[
+        rich(code_id, when, 1, "BR", "mobile", "www.google.com", 0),
+        rich(code_id, when, 2, "BR", "mobile", "www.google.com", 0),
+        rich(code_id, when, 3, "PT", "desktop", "x.com", 0),
+        // A crawler from a country and device that appear nowhere else, so if it
+        // leaked into the lists it would be unmistakable.
+        rich(code_id, when, 4, "NL", "bot", "", 1),
+        rich(code_id, when, 5, "NL", "bot", "", 1),
+    ])
+    .await
+    .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let range = DateRange {
+        from: at(2026, 7, 1, 0),
+        to: at(2026, 8, 1, 0),
+    };
+    let breakdown = sink.breakdown(code_id, range, 5).await.unwrap();
+
+    assert_eq!(breakdown.bots, 2, "bots are counted");
+
+    // Ranked by volume, busiest first.
+    assert_eq!(breakdown.countries.len(), 2, "NL was a bot, not a visitor");
+    assert_eq!(breakdown.countries[0].value, "BR");
+    assert_eq!(breakdown.countries[0].clicks, 2);
+    assert_eq!(breakdown.countries[1].value, "PT");
+
+    assert_eq!(breakdown.devices[0].value, "mobile");
+    assert_eq!(breakdown.devices[0].clicks, 2);
+    assert!(
+        breakdown.devices.iter().all(|d| d.value != "bot"),
+        "a bot is not a device someone browses with"
+    );
+
+    // The empty referer of the bot rows must not become a referrer called "".
+    assert_eq!(breakdown.referrers.len(), 2);
+    assert_eq!(breakdown.referrers[0].value, "www.google.com");
+}
+
+/// `LIMIT n BY dimension` is what keeps one busy dimension from swallowing the
+/// result. Without it, the six countries below would fill the whole answer and
+/// the device list would come back empty.
+#[tokio::test]
+async fn the_limit_applies_per_dimension_not_overall() {
+    let sink = sink().await;
+    let code_id = code_id(9);
+    let when = at(2026, 7, 17, 10);
+
+    let countries = ["BR", "PT", "US", "DE", "FR", "JP"];
+    let batch: Vec<_> = countries
+        .iter()
+        .enumerate()
+        .map(|(index, country)| {
+            let visitor = u64::try_from(index).unwrap_or(0);
+            rich(code_id, when, visitor, country, "desktop", "", 0)
+        })
+        .collect();
+
+    sink.record(&batch).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let range = DateRange {
+        from: at(2026, 7, 1, 0),
+        to: at(2026, 8, 1, 0),
+    };
+    let breakdown = sink.breakdown(code_id, range, 3).await.unwrap();
+
+    assert_eq!(breakdown.countries.len(), 3, "capped at the limit");
+    assert_eq!(
+        breakdown.devices.len(),
+        1,
+        "the device list survived a busier dimension"
+    );
+    assert_eq!(breakdown.devices[0].clicks, 6);
+}
+
+#[tokio::test]
+async fn a_disabled_sink_returns_an_empty_breakdown() {
+    let breakdown = ClickSink::disabled()
+        .breakdown(
+            1,
+            DateRange {
+                from: at(2026, 7, 1, 0),
+                to: at(2026, 8, 1, 0),
+            },
+            5,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(breakdown.bots, 0);
+    assert!(breakdown.countries.is_empty());
 }

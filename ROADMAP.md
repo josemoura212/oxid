@@ -553,25 +553,42 @@ range 7/14/21/28d). Ambas saem do mesmo `summary()` — a única diferença é o
       `uniq(visitor_hash)` + série `toStartOfDay`) implementados e testados contra o
       ClickHouse real. ClickHouse no compose com memória limitada; config `analytics.backend
       = off | clickhouse`, `off` por default. Nada plugado no hot path ainda
-- [ ] **Fatia 2 — o pipeline:** `mpsc` → worker → `record` em lote. `try_send` que descarta
-      e conta o descarte se encher, nunca bloqueia
-- [ ] `302` quando o código tem dono, `301` quando não tem — o caminho anônimo
+- [x] **Fatia 2 — o pipeline:** `mpsc` → worker → `record` em lote. `try_send` que descarta
+      e conta o descarte se encher, nunca bloqueia. Testado nos dois momentos em que um
+      lote é escrito sem encher: o timer, e o desligamento — este é o que perde clique
+      em silêncio se faltar
+- [x] `302` quando o código tem dono, `301` quando não tem — o caminho anônimo
       continua cacheável pelo browser e é o que o k6 exercita
 - [x] ~~Flag `owned` no valor cacheado~~ — **desnecessário** desde a Etapa 11: o código
       é por dono, então `short_codes.owner_id` já responde isso sem tocar o cache
-- [ ] `click_events` referencia **`short_codes.id`**, não `urls.id` — é a linha que faz
+- [x] `click_events` referencia **`short_codes.id`**, não `urls.id` — é a linha que faz
       `count(*) WHERE code_id = $1` ser a métrica de uma pessoa em vez de uma soma ambígua
-- [ ] Evento por clique sai do hot path: `mpsc` → worker → insert em lote
-- [ ] **Os dois destinos no código**, escolhidos por config: `analytics.backend =
-      postgres | clickhouse | off`
+- [x] Evento por clique sai do hot path: `mpsc` → worker → insert em lote
+- [x] ~~**Os dois destinos no código**: `analytics.backend = postgres | clickhouse | off`~~
+      — **descartado** pela decisão do topo desta etapa, que escolheu ClickHouse direto.
+      Ficou `off | clickhouse`. O interruptor que importava era o `off`, para a analytics
+      não contaminar a medição das Etapas 9-10, e esse existe
 - [ ] Captura: ts, url_id, país (`CF-IPCountry`), browser/OS/dispositivo do user-agent,
-      host do referer, idioma, flag de bot
-- [ ] Visitante único sem cookie: `hash(ip + user-agent + salt do dia)` — o salt diário
-      é o que impede reidentificar alguém entre dias
-- [ ] Dashboard: cliques totais e únicos, série temporal, top países, top referrers,
-      dispositivos
+      host do referer, idioma, flag de bot. **As colunas existem no schema desde a Fatia 1
+      e gravam string vazia** — a tabela já está particionada, então preenchê-las depois não
+      exige `ALTER`. É o que falta desta etapa, junto do item abaixo que depende dele
+- [x] Visitante único sem cookie: `hash(ip + user-agent + salt do dia)` — o salt diário
+      é o que impede reidentificar alguém entre dias. **Só passou a funcionar em
+      2026-07-31**: implementado desde o início, mas em produção contava ~1 visitante por
+      clique, porque o Traefik descartava o `X-Forwarded-For` da Cloudflare. Ver a pendência
+      de rate limit abaixo — era o mesmo header, e um ajuste resolveu os dois
+- [ ] Dashboard: ~~cliques totais e únicos~~, ~~série temporal~~, top países, top
+      referrers, dispositivos. **Metade pronta**: as duas telas (geral, com uma linha por
+      código, e individual com janelas de 7/14/21/28d) mostram total, únicos e a série
+      diária densa, com valor exato no hover. As três listas de topo dependem do
+      enriquecimento acima
 
 🎯 Um clique aparece no dashboard sem que o p95 do redirect se mova.
+   **Metade verificada**: o clique aparece — comprovado em produção em 2026-07-30, com o
+   pipeline inteiro (302 → emit → lote → ClickHouse → dashboard). O p95 **não foi medido
+   de novo** desde que a analytics entrou no ar, então a segunda metade da meta continua
+   sendo afirmação, não número. Fechar isso é repetir a corrida da Etapa 9 com
+   `analytics.backend = clickhouse` e comparar com a linha de base em `off`.
 🦀 Canal `mpsc` com backpressure, task de background, batch de escrita.
 
 ### Onde gravar o evento — as duas implementações, trocadas por config
@@ -870,7 +887,7 @@ dela mediria a CDN. Com tudo fechado, o gerador de carga teria que rodar dentro
 da VPS, disputando CPU com o alvo. É o erro que o estudo original cometeu e que
 este projeto existe para não repetir.
 
-## Pendência de segurança — o rate limit não segura pelo caminho público
+## Pendência de segurança — o rate limit não segurava pelo caminho público ✅
 
 Descoberto em 2026-07-29, ao verificar a reversão do build da Etapa 9. Mesma
 imagem, mesmo momento, 60 requisições simultâneas ao `POST /v1/shorten`:
@@ -884,10 +901,36 @@ O limite funciona; ele só não vê o cliente. A suspeita já estava anotada des
 deploy — "com CDN e proxy o `X-Forwarded-For` chega como cadeia, vale conferir que
 o primeiro é mesmo o do cliente" — e agora tem número.
 
-- [ ] Confirmar o que o `SmartIpKeyExtractor` está de fato lendo em produção
-- [ ] Fazer o proxy confiar nos ranges da CDN, para preservar o IP de origem
+- [x] Confirmar o que o `SmartIpKeyExtractor` está de fato lendo em produção
+- [x] Fazer o proxy confiar nos ranges da CDN, para preservar o IP de origem
 - [ ] Só então reavaliar `shorten_per_second` e `shorten_burst`, que hoje foram
       calibrados contra um limite que nunca chegou a atuar
+
+**Resolvido em 2026-07-31.** O Traefik só preserva o `X-Forwarded-For` recebido quando o
+peer está em `forwardedHeaders.trustedIPs`. Sem a lista ele descartava o header e escrevia
+o endereço de quem conectou — atrás da Cloudflare, um edge diferente a quase cada
+requisição. Uma flag no `command:` do proxy com as faixas da Cloudflare, e a mesma corrida
+de 60 requisições concorrentes passou de **60 × 200** para **40 × 200 e 20 × 429** — igual
+ao que só o NodePort direto produzia.
+
+**Achado pela Etapa 12, não por este item.** O `unique` do dashboard de cliques contava ~1
+visitante por clique: dois acessos com User-Agent idêntico, segundos de diferença, geravam
+dois `visitor_hash`. O hash é `ip + user-agent + dia`, então só o IP podia ter variado — o
+mesmo header, o mesmo defeito. Depois do ajuste os dois cliques colapsam em um hash com
+`n=2`.
+
+**A lição que generaliza, agora com a segunda metade:** não basta o extrator ler a ponta
+certa da cadeia — o proxy precisa ter deixado a cadeia chegar. E um header estragado não
+tem um sintoma só: aqui ele apareceu como limite que não limita **e** como métrica que
+mente, em dois consumidores que nunca se falaram. Quando duas coisas não relacionadas
+quebram junto, vale procurar a entrada que as duas leem.
+
+**Ressalva:** o conserto é prospectivo. Os eventos gravados antes dele carregam um hash por
+requisição, então o `unique` da janela de 30 dias continua inflado até eles saírem pelo TTL.
+
+**E o conserto não é definitivo:** o arquivo é gerado pelo Coolify, e tanto o *Reset
+Configuration* quanto um upgrade do Traefik o reescrevem, levando a flag junto sem avisar.
+Os dois sintomas acima são o alarme de que ela caiu. Detalhes em `docs/infra/cluster.md`.
 
 **Por que passa despercebido:** o teste ingênuo não distingue os dois casos. Trinta
 requisições sequenciais a ~150 ms cada levam quatro segundos e meio, e a 5/s de

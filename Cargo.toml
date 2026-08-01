@@ -37,6 +37,9 @@ clickhouse = { version = "0.15.1", default-features = false, features = [
     "inserter",
 ] }
 hex = "0.4.3"
+# Digest for API tokens. Explicit rather than leaning on the copy redis and
+# clickhouse pull in: a transitive dependency is not a promise.
+sha2 = "0.10.9"
 # The cookie crate expresses Max-Age with this; using anything else would mean
 # converting at every call site.
 time = "0.3.44"

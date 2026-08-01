@@ -174,6 +174,44 @@ pub struct ImportResponse {
     pub rejected: usize,
 }
 
+/// Longest name a token can carry. The field exists so a list of tokens reads as
+/// a list of decisions ("laptop", "work phone"); past this it stops being a label
+/// and starts being storage.
+pub const MAX_TOKEN_NAME_LEN: usize = 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateTokenRequest {
+    pub name: String,
+}
+
+/// A token, as the list shows it. Deliberately without the secret — that exists
+/// in exactly one response, [`CreatedToken`], and never again.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiTokenSummary {
+    pub id: i64,
+    pub name: String,
+    /// RFC 3339.
+    pub created_at: String,
+    /// `None` when the token has never authenticated a request. Absent rather
+    /// than a placeholder date, because "never used" is what makes an unfamiliar
+    /// token safe to revoke and that has to be unambiguous.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<String>,
+}
+
+/// The one response that carries the secret.
+///
+/// A separate type from [`ApiTokenSummary`] so the secret cannot leak into a list
+/// by someone adding a field: the type that has it is returned by exactly one
+/// handler, and the type the list returns has nowhere to put it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatedToken {
+    #[serde(flatten)]
+    pub token: ApiTokenSummary,
+    /// Shown once. The server keeps only a digest and cannot show it again.
+    pub secret: String,
+}
+
 /// Error body as defined by [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457).
 ///
 /// Fields carry distinct jobs and should not be collapsed: `title` is stable and

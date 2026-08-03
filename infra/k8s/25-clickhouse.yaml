@@ -25,6 +25,45 @@ data:
         <uncompressed_cache_size>0</uncompressed_cache_size>
     </clickhouse>
 
+  # ClickHouse's own telemetry, which on an instance this small is the entire
+  # workload. Left at defaults it wrote 2.9 GB of system logs against 8 KB of
+  # click data — `trace_log` 1.6 GB, `text_log` 1.0 GB — and the constant flushing
+  # and merging of them held ~1.2 of the node's 2 cores and filled the 1.4 GiB
+  # memory ceiling. Once that ceiling is reached ClickHouse kills incoming
+  # queries, so the dashboard failed with "could not load the stats" while the
+  # server looked healthy.
+  #
+  # The defaults are not wrong; they are sized for a cluster where this telemetry
+  # is a rounding error against real data. Here the ratio inverts.
+  #
+  # `trace_log` and `text_log` are switched off outright — a sampling profiler and
+  # a copy of every log line, neither of which anyone reads on a single-node
+  # hobby cluster. The rest keep a week, which is longer than any question asked
+  # of them here.
+  system-logs.xml: |
+    <clickhouse>
+        <trace_log remove="remove"/>
+        <text_log remove="remove"/>
+
+        <query_log>
+            <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        </query_log>
+        <metric_log>
+            <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        </metric_log>
+        <asynchronous_metric_log>
+            <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        </asynchronous_metric_log>
+        <part_log>
+            <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        </part_log>
+        <error_log>
+            <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        </error_log>
+        <latency_log remove="remove"/>
+        <processors_profile_log remove="remove"/>
+    </clickhouse>
+
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -80,6 +119,9 @@ spec:
             - name: tuning
               mountPath: /etc/clickhouse-server/config.d/low-memory.xml
               subPath: low-memory.xml
+            - name: tuning
+              mountPath: /etc/clickhouse-server/config.d/system-logs.xml
+              subPath: system-logs.xml
 
           # 127.0.0.1, not localhost: localhost resolves to ::1 and ClickHouse
           # binds IPv4 only by default, so the probe would get connection-refused

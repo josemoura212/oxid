@@ -293,3 +293,93 @@ pub async fn list_owned_code_ids(
     .fetch_all(pool)
     .await
 }
+
+// --- API tokens ---
+
+/// One of an owner's tokens, as the list screen shows it. No digest: the caller
+/// has no use for it and it has no business leaving this module.
+#[derive(Debug)]
+pub struct ApiToken {
+    pub id: i64,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+pub async fn create_token(
+    pool: &PgPool,
+    user_id: i64,
+    name: &str,
+    token_hash: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        INSERT INTO api_tokens (user_id, name, token_hash)
+        VALUES ($1, $2, $3)
+        RETURNING id
+        "#,
+        user_id,
+        name,
+        token_hash
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// Resolves a presented token to its owner, and records the use.
+///
+/// One statement rather than a SELECT followed by an UPDATE. Two would be two
+/// round trips on every authenticated call, and would leave a window where a
+/// token revoked in between still authenticates.
+///
+/// `last_used_at` is truncated to the hour. Not to save the write — Postgres
+/// writes a new tuple either way — but because the column exists to answer "is
+/// this unfamiliar token safe to revoke", and that question has never needed
+/// better resolution than "some time today". A precise timestamp would invite
+/// reading it as an audit log, which it is not.
+pub async fn touch_token(pool: &PgPool, token_hash: &str) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        UPDATE api_tokens
+        SET last_used_at = date_trunc('hour', now())
+        WHERE token_hash = $1
+        RETURNING user_id
+        "#,
+        token_hash
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn list_tokens(pool: &PgPool, user_id: i64) -> Result<Vec<ApiToken>, sqlx::Error> {
+    sqlx::query_as!(
+        ApiToken,
+        r#"
+        SELECT id, name, created_at, last_used_at
+        FROM api_tokens
+        WHERE user_id = $1
+        ORDER BY created_at DESC, id DESC
+        "#,
+        user_id
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Deletes one of the caller's tokens. `user_id` is in the WHERE clause, not
+/// checked beforehand: revoking someone else's token has to be impossible by
+/// construction rather than by remembering to guard.
+pub async fn revoke_token(pool: &PgPool, id: i64, user_id: i64) -> Result<bool, sqlx::Error> {
+    let deleted = sqlx::query!(
+        r#"
+        DELETE FROM api_tokens
+        WHERE id = $1 AND user_id = $2
+        "#,
+        id,
+        user_id
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(deleted.rows_affected() > 0)
+}

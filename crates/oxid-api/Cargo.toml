@@ -42,6 +42,7 @@ axum-extra.workspace = true
 clickhouse.workspace = true
 config.workspace = true
 hex.workspace = true
+sha2.workspace = true
 redis.workspace = true
 secrecy.workspace = true
 serde.workspace = true

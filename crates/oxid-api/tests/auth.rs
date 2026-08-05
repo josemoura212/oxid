@@ -26,7 +26,9 @@ use oxid::{
     routes,
     state::AppState,
 };
-use oxid_shared::{AccountResponse, ClickStats, LinkPage, OverviewStats, ShortenResponse};
+use oxid_shared::{
+    AccountResponse, ClickStats, CreatedToken, LinkPage, OverviewStats, ShortenResponse,
+};
 use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -628,5 +630,220 @@ async fn an_owned_code_answers_302_so_its_clicks_keep_arriving(pool: PgPool) {
     assert_eq!(
         response.headers().get(header::LOCATION).unwrap(),
         "https://example.com/anonymous"
+    );
+}
+
+// --- API tokens ---
+
+async fn mint_token(app: &Router, cookie: &str, name: &str) -> CreatedToken {
+    let response = app
+        .clone()
+        .oneshot(post_with_cookie(
+            "/v1/tokens",
+            &json!({ "name": name }),
+            cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    body_json(response).await
+}
+
+fn get_with_token(path: &str, secret: &str) -> Request<Body> {
+    Request::builder()
+        .uri(path)
+        .header(header::AUTHORIZATION, format!("Bearer {secret}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn post_with_token(path: &str, body: &serde_json::Value, secret: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", CLIENT_IP)
+        .header(header::AUTHORIZATION, format!("Bearer {secret}"))
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// What the extension is for: a credential that is not the cookie, shortening
+/// into the account it belongs to.
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_token_authenticates_and_the_link_lands_in_the_account(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = sign_up(&app).await;
+    let minted = mint_token(&app, &cookie, "laptop").await;
+
+    let response = app
+        .clone()
+        .oneshot(post_with_token(
+            "/v1/shorten",
+            &json!({ "url": "https://example.com/from-the-extension" }),
+            &minted.secret,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Listed through the *cookie*, proving the token wrote into the same account
+    // rather than somewhere of its own.
+    let page: LinkPage = body_json(
+        app.oneshot(get_with_cookie("/v1/urls", &cookie))
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(page.links.len(), 1);
+    assert_eq!(
+        page.links[0].long_url,
+        "https://example.com/from-the-extension"
+    );
+}
+
+/// The rule that keeps one stolen token from becoming a permanent foothold.
+///
+/// Found by hand after the first implementation shipped it broken: extending the
+/// `Session` extractor to accept tokens silently gave tokens the run of the
+/// credential endpoints, so a leaked token could mint replacements faster than
+/// anyone could revoke them.
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_token_cannot_manage_tokens(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = sign_up(&app).await;
+    let minted = mint_token(&app, &cookie, "laptop").await;
+
+    let mint_again = app
+        .clone()
+        .oneshot(post_with_token(
+            "/v1/tokens",
+            &json!({ "name": "escalation" }),
+            &minted.secret,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        mint_again.status(),
+        StatusCode::UNAUTHORIZED,
+        "a token that can mint tokens survives its own revocation"
+    );
+
+    let list = app
+        .clone()
+        .oneshot(get_with_token("/v1/tokens", &minted.secret))
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::UNAUTHORIZED);
+
+    let revoke = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/v1/tokens/{}", minted.token.id))
+                .header(header::AUTHORIZATION, format!("Bearer {}", minted.secret))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoke.status(), StatusCode::UNAUTHORIZED);
+
+    // And the cookie still manages them, so the restriction landed on the
+    // credential rather than on the endpoints.
+    let list = app
+        .oneshot(get_with_cookie("/v1/tokens", &cookie))
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_revoked_token_stops_working(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = sign_up(&app).await;
+    let minted = mint_token(&app, &cookie, "laptop").await;
+
+    let revoke = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/v1/tokens/{}", minted.token.id))
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoke.status(), StatusCode::NO_CONTENT);
+
+    let after = app
+        .oneshot(get_with_token("/v1/urls", &minted.secret))
+        .await
+        .unwrap();
+    assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Someone else's token id answers 404, the same as one that does not exist —
+/// revocation is scoped in the WHERE clause, so probing ids learns nothing.
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_token_cannot_be_revoked_by_another_account(pool: PgPool) {
+    let app = app(pool).await;
+    let owner = sign_up(&app).await;
+    let minted = mint_token(&app, &owner, "laptop").await;
+
+    let intruder = app
+        .clone()
+        .oneshot(post(
+            "/v1/signup",
+            &json!({ "email": "bruno@example.com", "password": PASSWORD }),
+        ))
+        .await
+        .unwrap();
+    let intruder = cookie_pair(&set_cookie(&intruder));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/v1/tokens/{}", minted.token.id))
+                .header(header::COOKIE, intruder)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Still the owner's, still working.
+    let still = app
+        .oneshot(get_with_token("/v1/urls", &minted.secret))
+        .await
+        .unwrap();
+    assert_eq!(still.status(), StatusCode::OK);
+}
+
+/// The secret exists in exactly one response. A list that leaked it would make
+/// storing only a digest pointless.
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_secret_is_never_returned_again(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = sign_up(&app).await;
+    let minted = mint_token(&app, &cookie, "laptop").await;
+
+    let response = app
+        .oneshot(get_with_cookie("/v1/tokens", &cookie))
+        .await
+        .unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let raw = String::from_utf8_lossy(&body);
+
+    assert!(
+        !raw.contains(&minted.secret),
+        "the list handed back the secret"
     );
 }

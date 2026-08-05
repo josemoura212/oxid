@@ -36,32 +36,47 @@ data:
   # The defaults are not wrong; they are sized for a cluster where this telemetry
   # is a rounding error against real data. Here the ratio inverts.
   #
-  # `trace_log` and `text_log` are switched off outright — a sampling profiler and
-  # a copy of every log line, neither of which anyone reads on a single-node
-  # hobby cluster. The rest keep a week, which is longer than any question asked
-  # of them here.
+  # Five are off outright. `trace_log` and `text_log` are a sampling profiler and a
+  # copy of every log line — nobody reads either here, and between them they wrote
+  # 2.6 GB against 8 KB of click data.
+  #
+  # `metric_log` and `asynchronous_metric_log` went too, and for a different
+  # reason worth separating: they are not big on disk, they are **wide**. Each
+  # carries a column per internal metric — over a thousand of them — and a row
+  # every second. Consolidating a part that shape needs more memory than this
+  # instance is allowed to have, so the flush fails, retries, and fails again:
+  # 1.55 million MEMORY_LIMIT_EXCEEDED in 44 hours, each one logged, the retry
+  # loop holding 1.4 of the node's 2 cores.
+  #
+  # That distinction is the lesson from the first attempt at this file, which
+  # gave these two a 7-day TTL and considered them handled. Retention was never
+  # the problem. A table that cannot be merged once will not merge better a week
+  # later, and the TTL evaluation is itself a merge.
+  #
+  # What is lost is nothing anyone was reading: the API already exports its own
+  # metrics to Prometheus, and Grafana is where they get looked at. ClickHouse
+  # observing itself once a second was buying a dashboard nobody opens.
+  #
+  # The three that stay are narrow — a handful of columns, written per event
+  # rather than per second — and they answer real questions when something breaks.
   system-logs.xml: |
     <clickhouse>
         <trace_log remove="remove"/>
         <text_log remove="remove"/>
+        <metric_log remove="remove"/>
+        <asynchronous_metric_log remove="remove"/>
+        <latency_log remove="remove"/>
+        <processors_profile_log remove="remove"/>
 
         <query_log>
             <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
         </query_log>
-        <metric_log>
-            <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
-        </metric_log>
-        <asynchronous_metric_log>
-            <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
-        </asynchronous_metric_log>
         <part_log>
             <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
         </part_log>
         <error_log>
             <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
         </error_log>
-        <latency_log remove="remove"/>
-        <processors_profile_log remove="remove"/>
     </clickhouse>
 
 ---
@@ -138,12 +153,21 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 15
 
-          # The hard ceiling the comment above is about. The request is modest so
-          # the scheduler still fits it next to everything else; the limit is what
-          # keeps a runaway query from taking the node with it.
+          # 4Gi rather than the 2Gi this started with, because the two resources
+          # are not equally scarce here and treating them alike was the mistake.
+          # The node has 12 GB and runs at roughly 60% of it, so memory is the
+          # cheap one — while CPU sits near saturation with 2 cores for
+          # everything. A tight memory ceiling bought nothing and cost the
+          # dashboard: queries that could not allocate were killed, which is how
+          # this surfaced.
+          #
+          # Still a ceiling, not an absence of one. It is what stops a runaway
+          # query taking the node down with it, and `max_server_memory_usage_to_
+          # ram_ratio` above keeps the server's own budget at 0.7 of whatever this
+          # says.
           resources:
             requests: { cpu: 100m, memory: 512Mi }
-            limits: { memory: 2Gi }
+            limits: { memory: 4Gi }
 
       volumes:
         - name: tuning

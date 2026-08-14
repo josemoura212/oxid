@@ -27,25 +27,11 @@
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 
-  /* One track shared by the bar and the content, so they always align.
-     Wider than the 46rem it started at, which left most of a laptop screen
-     empty, and still capped: past roughly 75 characters a line of prose gets
-     hard to follow back to the next one. */
-  --track: min(60rem, 100% - 3rem);
-
-  /* --- Surfaces ---
-   * A dialog is not the page with a border: it sits above it, and the chart
-   * well sits below the dialog — a recess for the instrument to be read in.
-   * Three depths, and nothing has needed a fourth. */
   --surface: #1c1815;
   --sunken: #100e0c;
-  --shadow-panel: 0 1.5rem 3rem rgb(0 0 0 / 45%);
 
-  /* --- Spacing, on a 4px base ---
-   * Six steps. This file used to carry twenty-two distinct spacings, each
-   * measured by eye for one component, which is why screens built by the same
-   * hand did not look related. A value outside this scale is now the signal
-   * that something was eyeballed. */
+  /* Spacing on a 4px base, six steps. A value outside this scale is the signal
+     that something was eyeballed. */
   --s1: 0.25rem;
   --s2: 0.5rem;
   --s3: 0.75rem;
@@ -53,20 +39,15 @@
   --s5: 1.5rem;
   --s6: 2rem;
 
-  /* --- Type, named by role rather than size ---
-   * A token called `0.72rem` invites a neighbour at 0.75rem and there were
-   * fourteen of them. A token called `--t-meta` has one meaning, and a second
-   * size has to argue for itself. */
+  /* Type named by role rather than size. */
   --t-micro: 0.6875rem;
   --t-meta: 0.8125rem;
   --t-body: 0.9375rem;
   --t-title: 1.125rem;
-  --t-figure: 2.25rem;
 
-  /* --- Radius, named by what it wraps --- */
+  /* Radius named by what it wraps. */
   --r-control: 0.25rem;
   --r-panel: 0.625rem;
-  --r-pill: 999px;
 }
 
 @media (prefers-color-scheme: light) {
@@ -80,49 +61,29 @@
     --inert: #d9cfc6;
     --surface: #fffdfb;
     --sunken: #f2ece6;
-    --shadow-panel: 0 1rem 2.5rem rgb(60 40 25 / 12%);
   }
 }
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --page: #faf7f4;
-    --edge: #e7ded6;
-    --fg: #1c1815;
-    --muted: #6b615a;
-    --accent-text: #a34d20;
-    --alert: #c0272c;
-    --inert: #d9cfc6;
-    --surface: #fffdfb;
-    --sunken: #f2ece6;
-    --shadow-panel: 0 1rem 2.5rem rgb(60 40 25 / 12%);
-  }
-}
-
 
 * {
   box-sizing: border-box;
 }
 
+/* A popup sizes itself to its content, so the width is set here and nowhere
+   else. Narrow enough to sit under the toolbar icon without covering the page,
+   wide enough that a shortcode and its button share a line. */
 body {
+  width: 23rem;
   margin: 0;
-  padding: var(--s6) var(--s4);
-  display: flex;
-  justify-content: center;
   background: var(--page);
   color: var(--fg);
   font: 16px/1.6 var(--prose);
   -webkit-font-smoothing: antialiased;
 }
 
-/* Static, not fixed: this is a page, not a dialog over one. Everything else
-   about it is the same panel the site uses. */
 .panel {
-  position: static;
-  transform: none;
-  width: min(30rem, 100%);
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--edge);
-  border-radius: var(--r-panel);
   background: var(--surface);
 }
 
@@ -130,7 +91,7 @@ body {
   display: flex;
   align-items: flex-start;
   gap: var(--s3);
-  padding: var(--s5) var(--s5) var(--s4);
+  padding: var(--s4) var(--s5);
   border-bottom: 1px solid var(--edge);
 }
 
@@ -143,8 +104,7 @@ body {
 }
 
 /* The eyebrow says what kind of thing this is, the title says which one. Two
-   jobs, so two elements — collapsing them is what left a shortcode doing duty
-   as a heading. */
+   jobs, so two elements. */
 .panel-eyebrow {
   font: 600 var(--t-micro)/1 var(--mono);
   letter-spacing: 0.09em;
@@ -166,22 +126,28 @@ body {
   color: var(--muted);
 }
 
+/* The gap is the fix for a real bug: the intro paragraph and the first field
+   label are siblings here, and with no gap between them the label read as part
+   of the paragraph. */
 .panel-body {
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
   padding: var(--s5);
 }
 
+/* A row, not a column. Stacked, the anchor sat left and the button sat centred,
+   which looked like a mistake because it was one. */
 .panel-foot {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--s2);
-  padding: var(--s4) var(--s5) var(--s5);
+  padding: var(--s3) var(--s5);
   border-top: 1px solid var(--edge);
 }
 
-/* 44px stays: a close affordance that only works with a mouse is the one
-   people on phones need most. The negative offsets pull that hit area back
-   onto the panel's padding so it does not inflate the header. */
 .field {
   display: flex;
   flex-direction: column;
@@ -271,15 +237,33 @@ body {
   filter: none;
 }
 
-/* Segmented control: one row of equal parts, so switching a range reads as a
-   range being switched rather than four unrelated buttons. */
 .stack {
   display: flex;
   flex-direction: column;
   gap: var(--s4);
 }
 
-/* Prose and states inside a panel. */
+/* The short link, treated the way the site treats a freshly minted token: this
+   is the one thing on screen worth reading, so it gets the accent. */
+.secret {
+  padding: var(--s3);
+  border: 1px solid var(--accent-face);
+  border-radius: var(--r-control);
+  background: color-mix(in srgb, var(--accent-face) 10%, transparent);
+}
+
+.secret-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+}
+
+.secret-value {
+  flex: 1;
+  overflow-wrap: anywhere;
+  font: var(--t-body)/1.5 var(--mono);
+  color: var(--fg);
+}
 
 .note {
   margin: 0;
@@ -290,13 +274,22 @@ body {
 
 .status {
   margin: 0;
-  padding: var(--s6) 0;
+  padding: var(--s5) 0;
   text-align: center;
   font-size: var(--t-meta);
   color: var(--muted);
 }
 
-.status--error {
+.feedback {
+  margin: 0;
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+
+.feedback--error {
   color: var(--accent-text);
 }
 
+[hidden] {
+  display: none;
+}

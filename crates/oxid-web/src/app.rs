@@ -456,7 +456,7 @@ fn persist(links: RwSignal<Vec<SavedLink>>, storage_failed: RwSignal<bool>) {
 /// Fire and forget. `write_text` hands back a promise, and awaiting it would buy
 /// nothing: the only failure modes are a denied permission and a non-secure
 /// origin, neither of which the person can act on from here.
-fn copy_to_clipboard(text: &str) {
+pub(crate) fn copy_to_clipboard(text: &str) {
     if let Some(window) = web_sys::window() {
         let _promise = window.navigator().clipboard().write_text(text);
     }

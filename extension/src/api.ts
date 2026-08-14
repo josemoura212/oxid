@@ -30,6 +30,11 @@ export interface Shortened {
 export type Failure =
   | { kind: "no-token" }
   | { kind: "unauthorized" }
+  /** Declared in the manifest but not granted — Firefox, until the person says
+   *  yes. Kept apart from `offline` because the two look identical from a failed
+   *  fetch and need opposite responses: one opens the options page, the other is
+   *  worth retrying. */
+  | { kind: "no-permission" }
   | { kind: "refused"; message: string }
   | { kind: "offline" };
 
@@ -45,6 +50,30 @@ const api: typeof chrome =
   (globalThis as { browser?: typeof chrome }).browser ?? chrome;
 
 export { api };
+
+/**
+ * Whether the browser has actually granted access to the API host.
+ *
+ * Declaring `host_permissions` is not the same as holding it. Chrome grants it
+ * at install; **Firefox treats it as opt-in under MV3** and hands the extension
+ * nothing until the person says yes. An extension that only declares it works in
+ * one browser and fails in the other with a network error that looks like the
+ * server is down.
+ */
+export async function hasHostAccess(base?: string): Promise<boolean> {
+  const origin = `${base ?? (await readBase())}/*`;
+
+  return api.permissions.contains({ origins: [origin] });
+}
+
+/**
+ * Asks for it. Must be called from a user gesture — a click — or the browser
+ * refuses without prompting, which is why this lives behind the options page's
+ * save button rather than running at startup.
+ */
+export async function requestHostAccess(base: string): Promise<boolean> {
+  return api.permissions.request({ origins: [`${base}/*`] });
+}
 
 export async function readToken(): Promise<string | null> {
   const stored = await api.storage.local.get(TOKEN_KEY);
@@ -95,6 +124,14 @@ export async function shorten(url: string): Promise<Result> {
 
   const base = await readBase();
 
+  // Checked before the fetch rather than inferred from its failure: a refused
+  // request and an unreachable host both surface as the same rejected promise,
+  // and telling someone the server is down when the browser simply never let us
+  // ask is the wrong instruction.
+  if (!(await hasHostAccess(base))) {
+    return { ok: false, error: { kind: "no-permission" } };
+  }
+
   let response: Response;
   try {
     response = await fetch(`${base}/v1/shorten`, {
@@ -105,7 +142,11 @@ export async function shorten(url: string): Promise<Result> {
       },
       body: JSON.stringify({ url }),
     });
-  } catch {
+  } catch (cause) {
+    // Logged rather than swallowed. This branch is where a failure with no
+    // visible cause ends up, and a silent catch here is what made the first
+    // report of it "the badge went red and the console is empty".
+    console.error("oxid: request to the API failed", cause);
     return { ok: false, error: { kind: "offline" } };
   }
 

@@ -1,10 +1,17 @@
 /**
- * The whole extension: click the icon, the page you are on becomes a short link
- * on your clipboard.
+ * The context menu, and only the context menu.
  *
- * There is no popup. A popup would be a window to dismiss between wanting the
- * link and having it, and the four steps this replaces — leave the page, open
- * oxid, paste, copy — are the entire reason it exists.
+ * Clicking the toolbar icon opens `popup.html`, which does its own shortening
+ * and its own clipboard write — an extension page can do both without asking
+ * anything of the page underneath. This file is what is left: right-clicking a
+ * link has no window to open, so it still shortens in the background, still
+ * injects to reach the clipboard, and still answers with a badge.
+ *
+ * That path is the weaker one and it is worth knowing why it is kept: injection
+ * is refused on the browser's own pages and before `activeTab` is granted, so a
+ * right-click can fail where the icon cannot. The compensation is that a
+ * right-click on a link always happens *in* a page, which is exactly the case
+ * injection handles well.
  */
 
 import { api, shorten, type Failure } from "./api.js";
@@ -18,14 +25,10 @@ const BADGE_MS = 2500;
  * Writes to the clipboard from the page, not from here.
  *
  * `navigator.clipboard` does not exist in an MV3 service worker — there is no
- * document to own the selection. Injecting into the active tab is the way that
- * works in all three browsers, and `activeTab` grants it only for the tab the
- * person just clicked on, which is exactly the scope this needs.
- *
- * The fallback matters more than it looks: `navigator.clipboard.writeText`
- * rejects on a page that is not focused, and a tab can lose focus between the
- * click and the response arriving. `execCommand` is deprecated and still the
- * only thing that works in that moment.
+ * document to own the selection. The fallback matters more than it looks:
+ * `writeText` rejects on a page that is not focused, and `execCommand` is
+ * deprecated and still the only thing that works in that moment. Both need
+ * `clipboardWrite`, which the manifest declares.
  */
 async function copy(tabId: number, text: string): Promise<boolean> {
   try {
@@ -50,16 +53,20 @@ async function copy(tabId: number, text: string): Promise<boolean> {
       args: [text],
     });
 
-    return result?.result === true;
-  } catch {
-    // Injection is refused on the browser's own pages — the new-tab page, the
-    // store, `about:` — and there is nothing to be done about it from here.
+    if (result?.result !== true) {
+      console.warn("oxid: the page refused the clipboard write", result);
+      return false;
+    }
+
+    return true;
+  } catch (cause) {
+    console.error("oxid: could not inject into the tab", cause);
     return false;
   }
 }
 
-/** A badge is the only feedback available without a popup, so it carries both
- *  outcomes: the code when it worked, a mark when it did not. */
+/** A badge is the only feedback available here, so it carries both outcomes:
+ *  the code when it worked, a mark when it did not. */
 async function badge(text: string, colour: string): Promise<void> {
   await api.action.setBadgeText({ text });
   await api.action.setBadgeBackgroundColor({ color: colour });
@@ -70,14 +77,17 @@ async function badge(text: string, colour: string): Promise<void> {
 }
 
 /**
- * Missing credentials open the options page rather than showing an error.
+ * Missing credentials open the settings rather than showing an error.
  *
- * "You are not signed in" is not a failure the person can act on from a badge,
- * and the stage's own goal says it: signed out, the click should invite you in
- * instead of failing.
+ * "You are not signed in" is not a failure anyone can act on from a badge, and
+ * both a missing token and a missing permission are granted on the same screen.
  */
 async function report(failure: Failure): Promise<void> {
-  if (failure.kind === "no-token" || failure.kind === "unauthorized") {
+  if (
+    failure.kind === "no-token" ||
+    failure.kind === "unauthorized" ||
+    failure.kind === "no-permission"
+  ) {
     await api.runtime.openOptionsPage();
     return;
   }
@@ -105,12 +115,6 @@ async function run(url: string | undefined, tabId: number | undefined): Promise<
   await badge(copied ? result.value.code.slice(0, 4) : "?", "#d4693a");
 }
 
-api.action.onClicked.addListener((tab) => {
-  void run(tab.url, tab.id);
-});
-
-// The context menu covers the other half of the job: a link on the page rather
-// than the page itself. Same path, same feedback.
 api.runtime.onInstalled.addListener(() => {
   api.contextMenus.create({
     id: MENU_ID,

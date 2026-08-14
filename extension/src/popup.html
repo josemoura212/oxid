@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>oxid</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <div class="panel-head">
+        <div class="panel-heading">
+          <span class="panel-eyebrow">oxid</span>
+          <h1 class="panel-title" id="heading">Encurtando</h1>
+          <span class="panel-sub" id="subheading"></span>
+        </div>
+      </div>
+
+      <div class="panel-body">
+        <p class="status" id="busy">Encurtando esta aba…</p>
+
+        <section class="stack" id="result" hidden>
+          <div class="secret">
+            <div class="secret-row">
+              <code class="secret-value" id="link"></code>
+              <button class="btn btn--quiet" type="button" id="copy">Copiar</button>
+            </div>
+          </div>
+          <p class="note" id="note"></p>
+        </section>
+
+        <section class="stack" id="trouble" hidden>
+          <p class="note" id="trouble-text"></p>
+          <button class="btn" type="button" id="trouble-action"></button>
+        </section>
+
+        <section class="stack" id="settings" hidden>
+          <p class="note">
+            Cole aqui um token da sua conta. Ele fica só neste navegador, e pode
+            ser revogado no site sem deslogar você de lugar nenhum.
+          </p>
+
+          <form class="stack" id="form">
+            <label class="field" for="token">
+              <span class="field-label">Token</span>
+              <input
+                class="field-input"
+                id="token"
+                type="password"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="oxid_pat_…"
+                required
+              />
+            </label>
+
+            <label class="field" for="base">
+              <span class="field-label">Servidor</span>
+              <input
+                class="field-input"
+                id="base"
+                type="url"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <span class="field-hint">
+                Só mude isto se você roda a sua própria instância.
+              </span>
+            </label>
+
+            <button class="btn" type="submit" id="save">Salvar</button>
+            <p class="feedback" id="feedback" role="status"></p>
+          </form>
+        </section>
+      </div>
+
+      <div class="panel-foot">
+        <a class="btn--link" id="tokens-link" href="#" target="_blank" rel="noreferrer">
+          Criar um token no oxid
+        </a>
+        <button class="btn--link" type="button" id="settings-link">Configurações</button>
+        <button class="btn--link" type="button" id="forget" hidden>Esquecer este token</button>
+      </div>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

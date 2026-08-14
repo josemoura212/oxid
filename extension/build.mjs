@@ -33,7 +33,7 @@ async function main() {
   await run("npx", ["tsc"], { cwd: root });
 
   const compiled = path.join(dist, ".tsc");
-  const assets = ["options.html", "options.css"];
+  const assets = ["popup.html", "popup.css"];
 
   for (const browser of BROWSERS) {
     const out = path.join(dist, browser);

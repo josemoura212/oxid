@@ -3,7 +3,13 @@
   "name": "oxid",
   "version": "0.1.0",
   "description": "Um clique encurta a página aberta e copia o link curto.",
-  "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "contextMenus",
+    "clipboardWrite"
+  ],
   "host_permissions": ["https://oxid.uk/*"],
 
   "background": {
@@ -20,14 +26,15 @@
 
   "action": {
     "default_title": "Encurtar esta página com oxid",
+    "default_popup": "popup.html",
     "default_icon": {
       "48": "icons/icon-48.png",
       "128": "icons/icon-128.png"
     }
   },
   "options_ui": {
-    "page": "options.html",
-    "open_in_tab": true
+    "page": "popup.html",
+    "open_in_tab": false
   },
   "icons": {
     "48": "icons/icon-48.png",

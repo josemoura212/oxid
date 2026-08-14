@@ -8,6 +8,7 @@ use oxid_shared::{
 
 use crate::{
     api,
+    app::copy_to_clipboard,
     i18n::{Locale, Strings},
     storage::SavedLink,
 };
@@ -1323,6 +1324,7 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
     let name = RwSignal::new(String::new());
     // The freshly minted secret, shown once. Cleared when the dialog closes.
     let secret = RwSignal::new(None::<String>);
+    let copied = RwSignal::new(false);
 
     let reload = Action::new_local(move |(): &()| async move {
         match api::list_tokens().await {
@@ -1347,6 +1349,7 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
             match api::create_token(wanted).await {
                 Ok(created) => {
                     secret.set(Some(created.secret));
+                    copied.set(false);
                     name.set(String::new());
                     reload.dispatch(());
                 }
@@ -1394,9 +1397,27 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
                         .get()
                         .map(|value| {
                             let strings = locale.get().strings();
+                            // Two owners: the macro moves what it renders, so the
+                            // element and the click handler each need their own.
+                            let shown = value.clone();
                             view! {
                                 <div class="secret" role="alert">
-                                    <code class="secret-value">{value}</code>
+                                    <div class="secret-row">
+                                        <code class="secret-value">{shown}</code>
+                                        <button
+                                            class="btn btn--quiet secret-copy"
+                                            type="button"
+                                            on:click=move |_| {
+                                                copy_to_clipboard(&value);
+                                                copied.set(true);
+                                            }
+                                        >
+                                            {move || {
+                                                let strings = locale.get().strings();
+                                                if copied.get() { strings.copied } else { strings.copy }
+                                            }}
+                                        </button>
+                                    </div>
                                     <p class="secret-warning">{strings.tokens_secret_warning}</p>
                                 </div>
                             }

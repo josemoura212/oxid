@@ -703,6 +703,7 @@ body {
    range being switched rather than four unrelated buttons. */
 .segment {
   display: flex;
+  gap: var(--s1);
   padding: var(--s1);
   border: 1px solid var(--edge);
   border-radius: var(--r-control);
@@ -711,7 +712,7 @@ body {
 
 .segment-option {
   flex: 1;
-  padding: var(--s1) 0;
+  padding: var(--s2) 0;
   border: 0;
   border-radius: calc(var(--r-control) - 1px);
   background: transparent;
@@ -1045,11 +1046,24 @@ body {
   background: color-mix(in srgb, var(--accent-face) 10%, transparent);
 }
 
+/* The value and its copy button sit on one line, with the button held to its
+   own width: a token wraps over several lines and the button must not stretch
+   with it. */
+.secret-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+}
+
 .secret-value {
-  display: block;
+  flex: 1;
   overflow-wrap: anywhere;
   font: var(--t-meta)/1.5 var(--mono);
   color: var(--fg);
+}
+
+.secret-copy {
+  flex: none;
 }
 
 .secret-warning {

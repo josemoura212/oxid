@@ -143,7 +143,13 @@ impl ClickSink {
         }
     }
 
-    /// Reads the summary for one code over a range.
+    /// Reads the summary for a set of codes over a range.
+    ///
+    /// A slice rather than one id because both dashboards ask this question: the
+    /// single-link screen passes one code, the aggregate passes every code the
+    /// account owns. `uniq` is why they cannot be the same call twice — a visitor
+    /// who opened two of the owner's links is one visitor, and summing per-link
+    /// uniques would count them twice.
     ///
     /// Unlike [`record`], the read does not abstract across backends — the query
     /// is a ClickHouse dialect (`toStartOfDay`, `uniq`), which is exactly why the
@@ -153,9 +159,12 @@ impl ClickSink {
     /// sidesteps every ambiguity about how the driver formats a `DateTime` for a
     /// bound parameter, and `fromUnixTimestamp` / `toUnixTimestamp` keep both
     /// ends in the same unit.
-    pub async fn summary(&self, code_id: i64, range: DateRange) -> Result<Summary, SinkError> {
+    pub async fn summary(&self, code_ids: &[i64], range: DateRange) -> Result<Summary, SinkError> {
         match self {
             Self::Disabled => Ok(Summary::empty()),
+            // `IN []` matches nothing, so the round trip is skipped rather than
+            // spent learning that.
+            Self::ClickHouse(_) if code_ids.is_empty() => Ok(Summary::empty()),
             Self::ClickHouse(client) => {
                 let from = range.from.timestamp();
                 let to = range.to.timestamp();
@@ -164,11 +173,11 @@ impl ClickSink {
                     .query(
                         "SELECT count() AS total, uniq(visitor_hash) AS unique \
                          FROM click_events \
-                         WHERE code_id = ? \
+                         WHERE code_id IN ? \
                            AND created_at >= fromUnixTimestamp(?) \
                            AND created_at <  fromUnixTimestamp(?)",
                     )
-                    .bind(code_id)
+                    .bind(code_ids)
                     .bind(from)
                     .bind(to)
                     .fetch_one::<Totals>()
@@ -180,12 +189,12 @@ impl ClickSink {
                     .query(
                         "SELECT toUnixTimestamp(toStartOfDay(created_at)) AS at, count() AS clicks \
                          FROM click_events \
-                         WHERE code_id = ? \
+                         WHERE code_id IN ? \
                            AND created_at >= fromUnixTimestamp(?) \
                            AND created_at <  fromUnixTimestamp(?) \
                          GROUP BY at ORDER BY at",
                     )
-                    .bind(code_id)
+                    .bind(code_ids)
                     .bind(from)
                     .bind(to)
                     .fetch_all::<Bucket>()
@@ -210,7 +219,7 @@ impl ClickSink {
         }
     }
 
-    /// The ranked dimensions for one code: countries, devices, referrers.
+    /// The ranked dimensions for a set of codes: countries, devices, referrers.
     ///
     /// One round trip for all three, not three. The `UNION ALL` labels each row
     /// with the dimension it came from, and `LIMIT n BY dimension` — a ClickHouse
@@ -223,12 +232,13 @@ impl ClickSink {
     /// called "".
     pub async fn breakdown(
         &self,
-        code_id: i64,
+        code_ids: &[i64],
         range: DateRange,
         limit: u8,
     ) -> Result<Breakdown, SinkError> {
         match self {
             Self::Disabled => Ok(Breakdown::default()),
+            Self::ClickHouse(_) if code_ids.is_empty() => Ok(Breakdown::default()),
             Self::ClickHouse(client) => {
                 let from = range.from.timestamp();
                 let to = range.to.timestamp();
@@ -236,12 +246,12 @@ impl ClickSink {
                 let bots = client
                     .query(
                         "SELECT count() FROM click_events \
-                         WHERE code_id = ? \
+                         WHERE code_id IN ? \
                            AND created_at >= fromUnixTimestamp(?) \
                            AND created_at <  fromUnixTimestamp(?) \
                            AND is_bot = 1",
                     )
-                    .bind(code_id)
+                    .bind(code_ids)
                     .bind(from)
                     .bind(to)
                     .fetch_one::<u64>()
@@ -252,30 +262,30 @@ impl ClickSink {
                         "SELECT dimension, value, clicks FROM ( \
                              SELECT 'country' AS dimension, country AS value, count() AS clicks \
                              FROM click_events \
-                             WHERE code_id = ? AND created_at >= fromUnixTimestamp(?) \
+                             WHERE code_id IN ? AND created_at >= fromUnixTimestamp(?) \
                                AND created_at < fromUnixTimestamp(?) AND is_bot = 0 AND country != '' \
                              GROUP BY value \
                              UNION ALL \
                              SELECT 'device' AS dimension, device AS value, count() AS clicks \
                              FROM click_events \
-                             WHERE code_id = ? AND created_at >= fromUnixTimestamp(?) \
+                             WHERE code_id IN ? AND created_at >= fromUnixTimestamp(?) \
                                AND created_at < fromUnixTimestamp(?) AND is_bot = 0 AND device != '' \
                              GROUP BY value \
                              UNION ALL \
                              SELECT 'referer' AS dimension, referer_host AS value, count() AS clicks \
                              FROM click_events \
-                             WHERE code_id = ? AND created_at >= fromUnixTimestamp(?) \
+                             WHERE code_id IN ? AND created_at >= fromUnixTimestamp(?) \
                                AND created_at < fromUnixTimestamp(?) AND is_bot = 0 AND referer_host != '' \
                              GROUP BY value \
                          ) ORDER BY dimension, clicks DESC, value LIMIT ? BY dimension",
                     )
-                    .bind(code_id)
+                    .bind(code_ids)
                     .bind(from)
                     .bind(to)
-                    .bind(code_id)
+                    .bind(code_ids)
                     .bind(from)
                     .bind(to)
-                    .bind(code_id)
+                    .bind(code_ids)
                     .bind(from)
                     .bind(to)
                     .bind(limit)

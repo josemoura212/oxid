@@ -151,7 +151,7 @@ async fn await_clicks(sink: &ClickSink, code_id: i64, range: DateRange, expected
     let budget = std::time::Duration::from_secs(20);
 
     loop {
-        let summary = sink.summary(code_id, range).await.unwrap();
+        let summary = sink.summary(&[code_id], range).await.unwrap();
 
         if summary.total >= expected || started.elapsed() >= budget {
             return summary;
@@ -169,7 +169,7 @@ async fn disabled_records_nothing_and_summarizes_empty() {
     sink.record(&[event(1, days_ago(5, 12), 1)]).await.unwrap();
 
     let range = window();
-    let summary = sink.summary(1, range).await.unwrap();
+    let summary = sink.summary(&[1], range).await.unwrap();
 
     assert_eq!(summary.total, 0);
     assert_eq!(summary.unique, 0);
@@ -234,6 +234,52 @@ async fn overview_groups_every_codes_clicks_in_one_pass() {
     assert_eq!(a.series.len(), 1, "both clicks fall on one day");
     assert_eq!(a.series[0].clicks, 2);
     assert_eq!(b.total, 1);
+}
+
+/// The aggregate screen's headline numbers, and the reason they cannot be built
+/// by summing the per-link ones.
+///
+/// One visitor opens two of the owner's links. Summing per-link uniques counts
+/// them twice and reports two people where there was one — which is exactly the
+/// shape of the bug this dashboard shipped with before, when `unique` counted
+/// roughly one per click. `uniq` over the whole id set is the only thing that
+/// answers "how many people", and it is why `summary` takes a slice instead of
+/// being called once per code.
+#[tokio::test]
+async fn a_visitor_on_two_links_is_one_person() {
+    let sink = sink().await;
+    let code_a = code_id(10);
+    let code_b = code_id(11);
+
+    // The same visitor hash on both codes, plus a second person on one of them.
+    sink.record(&[
+        event(code_a, days_ago(7, 9), 42),
+        event(code_b, days_ago(7, 10), 42),
+        event(code_b, days_ago(7, 11), 43),
+    ])
+    .await
+    .unwrap();
+
+    let range = window();
+    await_clicks(&sink, code_b, range, 2).await;
+
+    let together = sink.summary(&[code_a, code_b], range).await.unwrap();
+
+    assert_eq!(together.total, 3, "every click counts");
+    assert_eq!(
+        together.unique, 2,
+        "the visitor who opened both links is one person, not two"
+    );
+
+    // The sum of the parts, which is what a per-code call would have produced.
+    let a = sink.summary(&[code_a], range).await.unwrap();
+    let b = sink.summary(&[code_b], range).await.unwrap();
+
+    assert_eq!(
+        a.unique.saturating_add(b.unique),
+        3,
+        "summing per-link uniques double-counts, which is the bug being avoided"
+    );
 }
 
 /// An empty id list short-circuits: `IN []` would match nothing anyway, and the
@@ -326,7 +372,7 @@ async fn a_disabled_sink_spawns_no_worker() {
     tx.emit(event(1, days_ago(5, 12), 1));
     tx.emit(event(1, days_ago(5, 12), 1));
 
-    let summary = ClickSink::disabled().summary(1, window()).await.unwrap();
+    let summary = ClickSink::disabled().summary(&[1], window()).await.unwrap();
 
     assert_eq!(summary.total, 0);
 }
@@ -360,7 +406,7 @@ async fn the_breakdown_ranks_people_and_counts_bots_apart() {
     // same rows, so seeing them in the summary is seeing them at all.
     await_clicks(&sink, code_id, range, 5).await;
 
-    let breakdown = sink.breakdown(code_id, range, 5).await.unwrap();
+    let breakdown = sink.breakdown(&[code_id], range, 5).await.unwrap();
 
     assert_eq!(breakdown.bots, 2, "bots are counted");
 
@@ -406,7 +452,7 @@ async fn the_limit_applies_per_dimension_not_overall() {
     let range = window();
     await_clicks(&sink, code_id, range, 6).await;
 
-    let breakdown = sink.breakdown(code_id, range, 3).await.unwrap();
+    let breakdown = sink.breakdown(&[code_id], range, 3).await.unwrap();
 
     assert_eq!(breakdown.countries.len(), 3, "capped at the limit");
     assert_eq!(
@@ -420,7 +466,7 @@ async fn the_limit_applies_per_dimension_not_overall() {
 #[tokio::test]
 async fn a_disabled_sink_returns_an_empty_breakdown() {
     let breakdown = ClickSink::disabled()
-        .breakdown(1, window(), 5)
+        .breakdown(&[1], window(), 5)
         .await
         .unwrap();
 

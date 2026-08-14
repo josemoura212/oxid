@@ -736,13 +736,7 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                                 .collect();
 
                             return view! {
-                                <div class="readout">
-                                    <span class="readout-figure">{payload.total.to_string()}</span>
-                                    <span class="readout-unit">{strings.stats_total}</span>
-                                    <span class="readout-aside">
-                                        {format!("{} {}", payload.unique, strings.stats_unique)}
-                                    </span>
-                                </div>
+                                {readout(payload.total, payload.unique, strings)}
                                 {chart(&payload.series, strings.stats_title, hovered)}
                                 {day_axis(&axis, hovered)}
                                 {day_readout(&payload.series, strings, hovered)}
@@ -993,119 +987,195 @@ fn day_label(iso: &str) -> String {
     format!("{day}/{month}")
 }
 
-/// A polyline per link over the shared day axis, split into day columns.
+/// The stacked height of each day: every link's clicks for that index, summed.
 ///
-/// Every link's `clicks` is the same length as the axis, so a point is just its
-/// index times the step — no date reconciling on this side. `non-scaling-stroke`
-/// keeps the lines crisp despite the stretched viewBox, and the colours ride on
-/// SVG presentation attributes rather than inline styles, so a strict CSP has
-/// nothing to forbid.
+/// Both the chart and the legend need it — the chart to scale the bars, the
+/// legend to name the number under the pointer — and they need the *same* one.
+/// Written twice they would drift, and a legend disagreeing with the bar above
+/// it is the kind of bug nobody reports because it just looks like a rounding
+/// error.
 ///
-/// The transparent rect over each day is what makes hovering work: a polyline is
-/// a hairline and nearly impossible to hit with a pointer, so the whole column
-/// answers for its day and reports the index through `hovered`.
+/// The axis length comes from the first link rather than from `days`: every
+/// link's `clicks` is dense and the same length by contract, and a link's own
+/// series is what the chart actually indexes.
+fn day_totals(links: &[OverviewLink]) -> Vec<u64> {
+    let axis = links.first().map_or(0, |link| link.clicks.len());
+
+    (0..axis)
+        .map(|index| {
+            links.iter().fold(0_u64, |sum, link| {
+                sum.saturating_add(link.clicks.get(index).copied().unwrap_or(0))
+            })
+        })
+        .collect()
+}
+
+/// A link's share of one day, in chart units.
+///
+/// Floored at 1 for any non-zero count so a single click stays a visible sliver
+/// on a day somebody else dominates. Rounding it away would show a click that
+/// the legend then insists happened.
+fn band_height(clicks: u64, max: u64) -> u64 {
+    if clicks == 0 {
+        return 0;
+    }
+
+    clicks
+        .saturating_mul(CHART_H)
+        .checked_div(max)
+        .unwrap_or(0)
+        .max(1)
+}
+
+/// The two figures every stats screen opens with.
+///
+/// Shared because both dialogs ask the same question and answered it with the
+/// same markup written twice. Identical is worth naming.
+fn readout(total: u64, unique: u64, strings: &'static Strings) -> impl IntoView {
+    view! {
+        <div class="readout">
+            <span class="readout-figure">{total.to_string()}</span>
+            <span class="readout-unit">{strings.stats_total}</span>
+            <span class="readout-aside">{format!("{unique} {}", strings.stats_unique)}</span>
+        </div>
+    }
+}
+
+/// One stacked bar per day, segmented by link.
+///
+/// **This was a line per link and the lines hid each other.** Two links with one
+/// click on the same day drew the identical path, and the one underneath simply
+/// was not there. With up to eight links that is not an edge case: most links
+/// carry similar, low traffic, so the collisions are the normal reading. No
+/// palette fixes it — two equal values occupy the same pixel whatever colour
+/// they are.
+///
+/// Stacking removes the collision structurally, because a segment sits on top of
+/// the one before it rather than over it. It also answers the question this
+/// screen is named for: the bar's height is the day's total across every link,
+/// and the segments are what made it up.
+///
+/// What it gives up is comparing two links against each other — only the bottom
+/// segment has a common baseline. That is the right trade here, because
+/// comparing one link's shape is what the single-link dialog already does well.
+///
+/// Bars rather than lines for a second reason: these are daily counts, discrete
+/// buckets, and a line between two days claims a value at noon that nobody
+/// measured. The single-link chart has always drawn bars; this now matches it.
 fn overview_chart(
     links: &[OverviewLink],
     aria: &'static str,
     hovered: RwSignal<Option<usize>>,
 ) -> impl IntoView {
-    let max = links
-        .iter()
-        .flat_map(|link| link.clicks.iter().copied())
-        .max()
-        .unwrap_or(0)
-        .max(1);
     let axis = links.first().map_or(0, |link| link.clicks.len());
-    let step = if axis > 1 {
-        let span = u64::try_from(axis.saturating_sub(1)).unwrap_or(1);
-        CHART_W.checked_div(span).unwrap_or(0)
-    } else {
-        0
-    };
-    let point_x = |index: usize| step.saturating_mul(u64::try_from(index).unwrap_or(0));
 
-    // One divider per day boundary, so the eye can tell which day a bend sits on.
-    let dividers: Vec<_> = (0..axis)
+    // The tallest stack, not the busiest single link: the bars are totals now, so
+    // scaling to a link's own maximum would push every stack off the top.
+    let totals = day_totals(links);
+    let max = totals.iter().copied().max().unwrap_or(0).max(1);
+
+    let count = u64::try_from(axis).unwrap_or(0);
+    let slot = CHART_W.checked_div(count).unwrap_or(CHART_W);
+    let bar_w = slot.saturating_sub(BAR_GAP).max(1);
+
+    let stacks: Vec<_> = (0..axis)
         .map(|index| {
-            let x = point_x(index).to_string();
-            view! {
-                <line
-                    class="plot-grid"
-                    x1=x.clone()
-                    y1="0"
-                    x2=x
-                    y2=CHART_H.to_string()
-                    vector-effect="non-scaling-stroke"
-                />
-            }
-        })
-        .collect();
+            let offset = u64::try_from(index).unwrap_or(0);
+            let x = slot.saturating_mul(offset);
+            let empty = totals.get(index).copied().unwrap_or(0) == 0;
 
-    let polylines: Vec<_> = links
-        .iter()
-        .enumerate()
-        .map(|(rank, link)| {
-            let color = LINE_COLORS.get(rank).copied().unwrap_or("#8a8f98");
-            let points = link
-                .clicks
+            // Walked from the baseline up, each segment starting where the last
+            // one ended. `top` carries that running edge; heights are floored at
+            // 1 so a single click is a visible sliver rather than a rounded-away
+            // nothing on a day someone else dominates.
+            let mut top = CHART_H;
+            let segments: Vec<_> = links
                 .iter()
                 .enumerate()
-                .map(|(index, clicks)| {
-                    let x = point_x(index);
-                    let height = clicks.saturating_mul(CHART_H).checked_div(max).unwrap_or(0);
-                    let y = CHART_H.saturating_sub(height);
-                    format!("{x},{y}")
+                .filter_map(|(rank, link)| {
+                    let clicks = link.clicks.get(index).copied().unwrap_or(0);
+                    if clicks == 0 {
+                        return None;
+                    }
+
+                    let height = band_height(clicks, max);
+                    let y = top.saturating_sub(height);
+                    top = y;
+
+                    let color = LINE_COLORS.get(rank).copied().unwrap_or("#8a8f98");
+                    Some(view! {
+                        <rect
+                            class="plot-band"
+                            x=x.to_string()
+                            y=y.to_string()
+                            width=bar_w.to_string()
+                            height=height.to_string()
+                            fill=color
+                        ></rect>
+                    })
                 })
-                .collect::<Vec<_>>()
-                .join(" ");
+                .collect();
+
+            // A day nobody clicked draws a rule on the baseline rather than
+            // nothing, the same as the single-link chart: for a window where most
+            // days are quiet, that is the difference between "nobody clicked" and
+            // "the chart is broken".
+            let blank = empty.then(|| {
+                view! {
+                    <rect
+                        class="plot-bar is-empty"
+                        x=x.to_string()
+                        y=CHART_H.saturating_sub(EMPTY_MARK).to_string()
+                        width=bar_w.to_string()
+                        height=EMPTY_MARK.to_string()
+                    ></rect>
+                }
+            });
 
             view! {
-                <polyline
-                    class="plot-line"
-                    points=points
-                    fill="none"
-                    stroke=color
-                    vector-effect="non-scaling-stroke"
-                />
-            }
-        })
-        .collect();
-
-    // Centred on the point, so the nearest day wins rather than the one to the
-    // right. Half a step at each edge, which is what `saturating_sub` gives for
-    // index 0 without a special case.
-    let half = step.checked_div(2).unwrap_or(0);
-    let columns: Vec<_> = (0..axis)
-        .map(|index| {
-            let x = point_x(index).saturating_sub(half);
-            view! {
-                <rect
-                    class="plot-hit"
-                    class:active=move || hovered.get() == Some(index)
-                    x=x.to_string()
-                    y="0"
-                    width=step.max(1).to_string()
-                    height=CHART_H.to_string()
-                    on:mouseenter=move |_| hovered.set(Some(index))
-                ></rect>
+                <g>
+                    {segments}
+                    {blank}
+                    // The full slot, not the bar's width: sized to the bar it
+                    // would leave the gap between bars dead, and the legend would
+                    // blank out as the pointer crossed it.
+                    <rect
+                        class="plot-hit"
+                        class:is-active=move || hovered.get() == Some(index)
+                        x=x.to_string()
+                        y="0"
+                        width=slot.max(1).to_string()
+                        height=CHART_H.to_string()
+                        on:mouseenter=move |_| hovered.set(Some(index))
+                    ></rect>
+                </g>
             }
         })
         .collect();
 
     view! {
         <svg
-            class="plot plot--lines"
+            class="plot"
             viewBox=format!("0 0 {CHART_W} {CHART_H}")
             preserveAspectRatio="none"
             role="img"
             aria-label=aria
-            // Same reason as the bar chart: per-column `mouseleave` would blank
-            // the legend for a frame on every boundary crossed.
+            // Same reason as the single-link chart: a per-column `mouseleave`
+            // fires as the pointer crosses into the next one, blanking the legend
+            // for a frame on every boundary.
             on:mouseleave=move |_| hovered.set(None)
         >
-            {dividers}
-            {polylines}
-            {columns}
+            <line class="plot-grid" x1="0" y1="24" x2=CHART_W.to_string() y2="24" />
+            <line class="plot-grid" x1="0" y1="48" x2=CHART_W.to_string() y2="48" />
+            <line class="plot-grid" x1="0" y1="72" x2=CHART_W.to_string() y2="72" />
+            {stacks}
+            <line
+                class="plot-base"
+                x1="0"
+                y1=CHART_H.to_string()
+                x2=CHART_W.to_string()
+                y2=CHART_H.to_string()
+            />
         </svg>
     }
 }
@@ -1187,6 +1257,7 @@ fn day_readout(
 fn overview_legend(
     links: &[OverviewLink],
     days: &[String],
+    strings: &'static Strings,
     hovered: RwSignal<Option<usize>>,
 ) -> impl IntoView {
     let items: Vec<_> = links
@@ -1220,10 +1291,29 @@ fn overview_legend(
 
     let days = days.to_owned();
 
+    // The stacked height, so the sentence names the same number the bar draws.
+    // It used to stop at the date, which left the one figure the chart is built
+    // around readable only by eye.
+    let totals = day_totals(links);
+
     view! {
         <div class="trace-wrap">
             <span class="trace">
-                {move || hovered.get().and_then(|index| days.get(index).map(|iso| day_label(iso)))}
+                {move || {
+                    hovered
+                        .get()
+                        .and_then(|index| {
+                            days.get(index)
+                                .map(|iso| {
+                                    format!(
+                                        "{} · {} {}",
+                                        day_label(iso),
+                                        totals.get(index).copied().unwrap_or(0),
+                                        strings.stats_day_clicks,
+                                    )
+                                })
+                        })
+                }}
             </span>
             <ul class="legend">{items}</ul>
         </div>
@@ -1296,9 +1386,15 @@ fn OverviewChart(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView 
                                     .into_any();
                             }
                             return view! {
+                                // The same figures the single-link dialog opens
+                                // with. This screen had none of them, which left
+                                // the more informative of the two answering fewer
+                                // questions than the narrower one.
+                                {readout(payload.total, payload.unique, strings)}
                                 {overview_chart(&payload.links, strings.overview_title, hovered)}
                                 {day_axis(&payload.days, hovered)}
-                                {overview_legend(&payload.links, &payload.days, hovered)}
+                                {overview_legend(&payload.links, &payload.days, strings, hovered)}
+                                {breakdown_view(&payload.breakdown, strings)}
                             }
                                 .into_any();
                         }
@@ -1617,5 +1713,71 @@ pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
             <LinkStats active=active locale=locale />
             <OverviewChart open=overview_open locale=locale />
         </section>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OverviewLink, band_height, day_totals};
+    use crate::account::CHART_H;
+
+    fn link(code: &str, clicks: &[u64]) -> OverviewLink {
+        OverviewLink {
+            code: code.to_owned(),
+            total: clicks.iter().copied().sum(),
+            clicks: clicks.to_vec(),
+        }
+    }
+
+    /// The case the chart was rewritten for. Two links with one click on the
+    /// same day used to draw the identical line and one of them vanished;
+    /// stacked, that day is worth two and both segments are on screen.
+    #[test]
+    fn a_day_two_links_share_sums_instead_of_hiding_one() {
+        let links = [link("aaa", &[0, 1, 0]), link("bbb", &[0, 1, 0])];
+
+        assert_eq!(day_totals(&links), vec![0, 2, 0]);
+    }
+
+    #[test]
+    fn totals_follow_the_axis_even_when_a_link_is_silent() {
+        let links = [link("aaa", &[3, 0, 1]), link("bbb", &[0, 0, 0])];
+
+        assert_eq!(day_totals(&links), vec![3, 0, 1]);
+    }
+
+    #[test]
+    fn no_links_means_no_axis() {
+        assert!(day_totals(&[]).is_empty());
+    }
+
+    /// A short series must not read values off the end of the axis. The lints
+    /// deny indexing here, and this is why: the contract says every link is the
+    /// same length, and a chart is not the place to find out it was broken.
+    #[test]
+    fn a_short_series_counts_as_zero_rather_than_panicking() {
+        let links = [link("aaa", &[1, 1, 1]), link("bbb", &[5])];
+
+        assert_eq!(day_totals(&links), vec![6, 1, 1]);
+    }
+
+    #[test]
+    fn a_full_day_fills_the_plot_and_half_fills_half() {
+        assert_eq!(band_height(10, 10), CHART_H);
+        assert_eq!(band_height(5, 10), CHART_H / 2);
+    }
+
+    /// One click on a day someone else dominates rounds to zero by arithmetic.
+    /// Drawing nothing would deny a click the legend goes on to report, so the
+    /// band is floored at one unit.
+    #[test]
+    fn a_single_click_stays_visible_under_a_busy_day() {
+        assert_eq!(band_height(1, 10_000), 1);
+    }
+
+    #[test]
+    fn no_clicks_draws_nothing() {
+        assert_eq!(band_height(0, 10), 0);
+        assert_eq!(band_height(0, 0), 0);
     }
 }

@@ -223,7 +223,7 @@ pub(super) async fn stats(
 
     let summary = state
         .clicks
-        .summary(code_id, range)
+        .summary(&[code_id], range)
         .await
         .map_err(|_| AppError::Internal("failed to read analytics"))?;
 
@@ -248,7 +248,7 @@ pub(super) async fn stats(
     // to spare.
     let breakdown = state
         .clicks
-        .breakdown(code_id, range, MAX_BREAKDOWN)
+        .breakdown(&[code_id], range, MAX_BREAKDOWN)
         .await
         .map_err(|_| AppError::Internal("failed to read analytics"))?;
 
@@ -305,7 +305,10 @@ pub(super) async fn overview(
     if code_ids.is_empty() {
         return Ok(Json(OverviewStats {
             days: days_iso,
+            total: 0,
+            unique: 0,
             links: Vec::new(),
+            breakdown: ClickBreakdown::default(),
         }));
     }
 
@@ -315,7 +318,25 @@ pub(super) async fn overview(
         .await
         .map_err(|_| AppError::Internal("failed to read analytics"))?;
 
-    // Busiest first, and only as many lines as the chart can carry.
+    // Sequential for the same reason as `stats`: three queries racing buy
+    // milliseconds on a dashboard nobody is holding a stopwatch to, and cost
+    // connections on a node that runs everything else too.
+    let summary = state
+        .clicks
+        .summary(&code_ids, range)
+        .await
+        .map_err(|_| AppError::Internal("failed to read analytics"))?;
+
+    let breakdown = state
+        .clicks
+        .breakdown(&code_ids, range, MAX_BREAKDOWN)
+        .await
+        .map_err(|_| AppError::Internal("failed to read analytics"))?;
+
+    // Busiest first, and only as many series as the chart can carry. The totals
+    // above are deliberately **not** truncated with it: they answer "how much
+    // traffic do I have", and a number that silently drops the ninth link would
+    // be wrong rather than abbreviated.
     groups.sort_by_key(|group| std::cmp::Reverse(group.total));
     groups.truncate(MAX_OVERVIEW_LINKS);
 
@@ -335,7 +356,15 @@ pub(super) async fn overview(
 
     Ok(Json(OverviewStats {
         days: days_iso,
+        total: summary.total,
+        unique: summary.unique,
         links,
+        breakdown: ClickBreakdown {
+            bots: breakdown.bots,
+            countries: slices(breakdown.countries),
+            devices: slices(breakdown.devices),
+            referrers: slices(breakdown.referrers),
+        },
     }))
 }
 

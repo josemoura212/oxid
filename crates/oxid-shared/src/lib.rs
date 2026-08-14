@@ -122,15 +122,27 @@ pub struct ClickPoint {
 /// The aggregate screen: every one of the owner's links on one day axis.
 ///
 /// The axis is shared and dense — one entry per day in the window — so each
-/// link's `clicks` lines up index-for-index with `days` and the front can draw a
-/// line per link without reconciling different date sets. The server fills the
-/// gaps with zeros; a day nobody clicked is a zero, not a missing point.
+/// link's `clicks` lines up index-for-index with `days` and the front can stack
+/// them without reconciling different date sets. The server fills the gaps with
+/// zeros; a day nobody clicked is a zero, not a missing point.
+///
+/// `total`, `unique` and `breakdown` describe **every** link the account owns,
+/// not just the ones in `links` — the chart is capped at what it can carry and
+/// the numbers are not. They are the same shape as [`ClickStats`] on purpose:
+/// the aggregate screen asks the same questions as the single-link one, and
+/// answering them differently was what made it the weaker of the two.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverviewStats {
     /// Day-starts over the window, RFC 3339, oldest first.
     pub days: Vec<String>,
-    /// One line per link, ranked so the busiest come first.
+    /// Clicks across every owned link over the window.
+    pub total: u64,
+    /// Distinct visitors across every owned link. Someone who opened two of them
+    /// counts once, which is why this is not the sum of the per-link uniques.
+    pub unique: u64,
+    /// One series per link, ranked so the busiest come first.
     pub links: Vec<OverviewLink>,
+    pub breakdown: ClickBreakdown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -685,11 +685,11 @@ extensão, e um link encurtado que some é o único jeito de o produto falhar se
 (Etapa 5.1). Com conta, o link cai na lista da pessoa e a extensão vira útil no dia a dia.
 Depois da Etapa 11 de propósito, porque é ela que dá o "logado" em que isto se apoia.
 
-- [ ] Manifest V3 (Chrome/Edge) e WebExtensions (Firefox) a partir do mesmo código
-- [ ] Estado de login na extensão: sem credencial, o ícone abre "entre no oxid para usar",
+- [x] Manifest V3 (Chrome/Edge) e WebExtensions (Firefox) a partir do mesmo código
+- [x] Estado de login na extensão: sem credencial, o ícone abre "entre no oxid para usar",
       não um erro. Com credencial, é o um-clique
-- [ ] Ação do ícone: URL da aba ativa → `POST /v1/shorten` autenticado → clipboard → badge
-- [ ] Menu de contexto ("encurtar este link"), além da página atual
+- [x] Ação do ícone: URL da aba ativa → `POST /v1/shorten` autenticado → clipboard
+- [x] Menu de contexto ("encurtar este link"), além da página atual
 - [ ] Publicar nas duas lojas
 
 🎯 Logado, um clique encurta a aba atual e copia o link, e ele aparece na lista da conta.
@@ -700,6 +700,21 @@ no clique**, e é tudo que esta extensão precisa. Pedir `host_permissions: ["<a
 o caminho mais fácil — é pedir para ler qualquer página que a pessoa visite: atrasa a
 revisão das lojas e transforma um comprometimento da extensão num vazamento do histórico
 inteiro. `activeTab` + `clipboardWrite`, e nada mais.
+
+**Esta linha custou uma sessão de debug.** Ela dizia `clipboardWrite` e o manifest não
+declarava. A extensão escrevia na área de transferência **injetando um script na página
+aberta**, e sem essa permissão a injeção só funciona quando a página tem ativação transitória
+do usuário — o que dava certo em `oxid.uk`, onde a pessoa acabou de clicar, e falhava em
+qualquer outra aba. Injeção também é recusada nas páginas do próprio navegador e antes de
+`activeTab` ser concedida. Três falhas distintas, todas chegando como o mesmo `false`, e o
+único retorno era um caractere no badge.
+
+O conserto foi mudar de superfície: o ícone abre um popup, que é **página de extensão** —
+tem documento próprio, está em foco por definição e copia sem pedir nada da página de baixo.
+O menu de contexto continua injetando, porque um clique com o botão direito num link não tem
+janela para abrir; é o caminho fraco, mantido porque acontece sempre dentro de uma página.
+Isso reverte o "sem popup" que estava escrito aqui: o clique a mais paga uma classe inteira
+de bug, e agora o popup consegue dizer uma frase em vez de um caractere.
 
 **Duas coisas que precisam mudar no servidor:**
 
@@ -1009,6 +1024,52 @@ bypass**. É mais forte do que o gatilho conseguia ser.
 **Descartado:** `pull_request_target` roda no contexto base *com* secrets — fazer checkout do
 código do fork ali entrega as credenciais a quem abriu o PR. `workflow_run` resolveria, mas
 acrescenta um workflow inteiro para um problema que o environment dissolve.
+
+## "Dados gerais" ficou pior que o dialog de um link só ✅
+
+O dialog por link ganhou tratamento na Etapa 12 e o agregado não. O resultado era que a tela
+que deveria ser a mais informativa das duas era a que menos informava.
+
+**O que estava errado:**
+
+1. **Não tinha métrica nenhuma.** O dialog de um link abre com o total, os únicos e as listas
+   de países, dispositivos e origens. O agregado tinha só linhas — nem o número de cliques do
+   período, que é a pergunta mais óbvia de uma tela chamada "dados gerais".
+2. **As linhas se sobrepunham e uma sumia.** Dois links com 1 clique no mesmo dia desenhavam
+   o caminho idêntico, e o de baixo simplesmente não estava lá. Com 8 links isso não é caso
+   de borda, é a leitura normal — a maioria tem tráfego parecido e baixo.
+3. **A legenda mostrava número sem escala.**
+4. **O readout do dia não trazia valor.** Mostrava `14/08` e parava.
+
+**A decisão que destravou o resto: sobreposição é problema de _codificação_, não de cor.**
+Trocar a paleta não resolve — dois valores iguais ocupam o mesmo pixel seja qual for a cor.
+As saídas reais eram empilhar, separar em small multiples, ou mudar o que o eixo mede.
+
+**Escolhido: barras empilhadas por dia, segmentadas por link.** Empilhar remove a colisão
+por construção (um segmento fica *em cima* do anterior, não *sobre* ele) e responde a
+pergunta que dá nome à tela: a altura da barra é o total do dia somando todos os links, e os
+segmentos são o que compôs esse total. Barra e não linha por um segundo motivo — são
+contagens diárias, baldes discretos, e uma linha entre dois dias afirma um valor ao meio-dia
+que ninguém mediu. O gráfico de um link só sempre desenhou barras; agora os dois combinam.
+
+**O que isso custa:** comparar dois links entre si fica pior, porque só o segmento de baixo
+tem linha de base comum. É o trade certo aqui, já que comparar a forma de *um* link é o que
+o dialog individual já faz bem.
+
+- [x] Decidir a codificação — barras empilhadas
+- [x] Trazer as métricas do dialog de um link para o agregado (total, únicos, breakdowns)
+- [x] Readout por dia com o valor empilhado
+
+**Efeito colateral no servidor, e o bug que ele evita:** `summary` e `breakdown` passaram a
+receber `&[i64]` em vez de um id — o agregado precisa das mesmas perguntas sobre todos os
+códigos da conta. Não é só conveniência: `uniq(visitor_hash)` sobre o conjunto inteiro conta
+uma pessoa que abriu dois links **uma vez**, e somar os únicos por link contaria duas. É a
+mesma forma do bug que o `unique` já teve antes de o `X-Forwarded-For` ser corrigido, e agora
+tem teste (`a_visitor_on_two_links_is_one_person`).
+
+Os totais do topo são de propósito **não** truncados junto com o gráfico: o gráfico corta em
+`MAX_OVERVIEW_LINKS`, os números respondem "quanto tráfego eu tenho" e um número que
+silenciosamente descarta o nono link estaria errado, não abreviado.
 
 ---
 

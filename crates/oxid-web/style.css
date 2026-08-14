@@ -779,10 +779,6 @@ body {
   height: 6.5rem;
 }
 
-.plot--lines {
-  height: 7.5rem;
-}
-
 .plot-grid {
   stroke: var(--edge);
   stroke-width: 1;
@@ -804,9 +800,13 @@ body {
   fill: var(--edge);
 }
 
-.plot-line {
-  fill: none;
-  stroke-width: 1.5;
+/* One link's share of a day. The fill comes from the palette as an SVG
+   presentation attribute, so a strict CSP has no inline style to forbid; the hairline
+   is what keeps two adjacent segments from reading as one taller band when their
+   colours are close. */
+.plot-band {
+  stroke: var(--surface);
+  stroke-width: 0.5;
 }
 
 /* Transparent until hovered, when it becomes the column highlight. The bar

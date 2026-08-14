@@ -351,8 +351,8 @@ fn DialogActions(
     pending: Signal<bool>,
 ) -> impl IntoView {
     view! {
-        <div class="dialog-actions">
-            <button class="composer-submit" type="submit" disabled=move || pending.get()>
+        <div class="panel-foot">
+            <button class="btn" type="submit" disabled=move || pending.get()>
                 {move || {
                     let strings = locale.get().strings();
                     if pending.get() {
@@ -366,23 +366,17 @@ fn DialogActions(
             </button>
 
             <button
-                class="dialog-switch"
+                class="btn--link"
                 type="button"
                 on:click=move |_| {
                     error.set(None);
                     mode
-                        .set(
-                            if mode.get() == Mode::SignIn { Mode::SignUp } else { Mode::SignIn },
-                        );
+                        .set(if mode.get() == Mode::SignIn { Mode::SignUp } else { Mode::SignIn });
                 }
             >
                 {move || {
                     let strings = locale.get().strings();
-                    if mode.get() == Mode::SignIn {
-                        strings.no_account
-                    } else {
-                        strings.have_account
-                    }
+                    if mode.get() == Mode::SignIn { strings.no_account } else { strings.have_account }
                 }}
             </button>
         </div>
@@ -461,20 +455,20 @@ pub fn AccountDialog(
 
     view! {
         <Show when=move || open.get()>
-            <div
-                class="dialog-veil"
-                role="presentation"
-                on:click=move |_| open.set(false)
-            ></div>
-
-            <div
-                class="dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-label=move || locale.get().strings().account_dialog
+            <Panel
+                eyebrow=Signal::derive(move || locale.get().strings().account_dialog.to_owned())
+                title=Signal::derive(move || {
+                    let strings = locale.get().strings();
+                    if mode.get() == Mode::SignIn {
+                        strings.sign_in.to_owned()
+                    } else {
+                        strings.sign_up.to_owned()
+                    }
+                })
+                close_label=Signal::derive(move || locale.get().strings().close.to_owned())
+                close=Callback::new(move |()| open.set(false))
             >
                 <form
-                    class="dialog-form"
                     // Declared even though the submit is intercepted. Password
                     // managers look for a form that posts somewhere before they
                     // offer to save a credential — a form with neither method
@@ -491,20 +485,26 @@ pub fn AccountDialog(
                         submit.dispatch(());
                     }
                 >
-                    <CredentialsFields
-                        locale=locale
-                        mode=mode
-                        email=email
-                        set_email=set_email
-                        password=password
-                        set_password=set_password
-                        confirm=confirm
-                        set_confirm=set_confirm
-                    />
+                    <div class="panel-body">
+                        <div class="stack">
+                            <CredentialsFields
+                                locale=locale
+                                mode=mode
+                                email=email
+                                set_email=set_email
+                                password=password
+                                set_password=set_password
+                                confirm=confirm
+                                set_confirm=set_confirm
+                            />
 
-                    <Show when=move || error.get().is_some()>
-                        <p class="dialog-error" role="alert">{move || error.get()}</p>
-                    </Show>
+                            <Show when=move || error.get().is_some()>
+                                <p class="status status--error" role="alert">
+                                    {move || error.get()}
+                                </p>
+                            </Show>
+                        </div>
+                    </div>
 
                     <DialogActions
                         locale=locale
@@ -513,16 +513,7 @@ pub fn AccountDialog(
                         pending=Signal::derive(move || pending.get())
                     />
                 </form>
-
-                <button
-                    class="dialog-close"
-                    type="button"
-                    aria-label=move || locale.get().strings().close
-                    on:click=move |_| open.set(false)
-                >
-                    "×"
-                </button>
-            </div>
+            </Panel>
         </Show>
     }
 }
@@ -539,6 +530,9 @@ const CHART_W: u64 = 320;
 const CHART_H: u64 = 96;
 /// Gap carved out of each day's slot, so neighbouring bars do not touch.
 const BAR_GAP: u64 = 3;
+
+/// Height of the rule a zero-click day draws on the baseline.
+const EMPTY_MARK: u64 = 2;
 
 /// One `<rect>` per day, each scaled against the busiest day in the window.
 ///
@@ -571,13 +565,19 @@ fn chart(
                 .saturating_mul(CHART_H)
                 .checked_div(max)
                 .unwrap_or(0);
+            // A day with no clicks draws a rule on the baseline rather than
+            // nothing. Zero height was indistinguishable from no data at all,
+            // and for a window where most days are quiet that is the difference
+            // between "nobody clicked" and "the chart is broken".
+            let empty = point.clicks == 0;
+            let height = if empty { EMPTY_MARK } else { height };
             let y = CHART_H.saturating_sub(height);
 
             view! {
                 <g>
                     <rect
-                        class="chart-bar"
-                        class:active=move || hovered.get() == Some(index)
+                        class="plot-bar"
+                        class:is-empty=empty
                         x=x.to_string()
                         y=y.to_string()
                         width=bar_w.to_string()
@@ -589,8 +589,8 @@ fn chart(
                     // would blank out as the pointer crossed it. Consecutive
                     // slots tile exactly, with no overlap and no seam.
                     <rect
-                        class="chart-hit"
-                        class:active=move || hovered.get() == Some(index)
+                        class="plot-hit"
+                        class:is-active=move || hovered.get() == Some(index)
                         x=x.to_string()
                         y="0"
                         width=slot.max(1).to_string()
@@ -604,7 +604,7 @@ fn chart(
 
     view! {
         <svg
-            class="chart"
+            class="plot"
             viewBox=format!("0 0 {CHART_W} {CHART_H}")
             preserveAspectRatio="none"
             role="img"
@@ -616,7 +616,20 @@ fn chart(
             // there is genuinely no day under the pointer.
             on:mouseleave=move |_| hovered.set(None)
         >
+            // Three rules and a baseline. They are what turn a row of bars into
+            // something you can read a value off, instead of a shape you can
+            // only compare against itself.
+            <line class="plot-grid" x1="0" y1="24" x2=CHART_W.to_string() y2="24" />
+            <line class="plot-grid" x1="0" y1="48" x2=CHART_W.to_string() y2="48" />
+            <line class="plot-grid" x1="0" y1="72" x2=CHART_W.to_string() y2="72" />
             {bars}
+            <line
+                class="plot-base"
+                x1="0"
+                y1=CHART_H.to_string()
+                x2=CHART_W.to_string()
+                y2=CHART_H.to_string()
+            />
         </svg>
     }
 }
@@ -684,28 +697,25 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
 
     view! {
         <Show when=move || active.get().is_some()>
-            <StatsShell
-                label=Signal::derive(move || locale.get().strings().stats_title.to_owned())
+            <Panel
+                wide=true
+                eyebrow=Signal::derive(move || locale.get().strings().stats_title.to_owned())
+                title=Signal::derive(move || {
+                    active.get().map(|link| link.code).unwrap_or_default()
+                })
+                sub=Signal::derive(move || {
+                    active
+                        .get()
+                        .map(|link| crate::app::strip_scheme(&link.long_url).to_owned())
+                        .unwrap_or_default()
+                })
                 close_label=Signal::derive(move || locale.get().strings().close.to_owned())
                 close=Callback::new(move |()| active.set(None))
             >
-                <div class="stats-head">
-                    <span class="stats-code">{move || active.get().map(|link| link.code)}</span>
-                    <span class="stats-url">
-                        <span class="stats-url-label">
-                            {move || locale.get().strings().stats_original}
-                        </span>
-                        {move || {
-                            active
-                                .get()
-                                .map(|link| crate::app::strip_scheme(&link.long_url).to_owned())
-                        }}
-                    </span>
-                </div>
 
                 <RangeTabs days=days />
 
-                <div class="stats-body" class:is-loading=move || loading.get()>
+                <div class="panel-body" class:is-loading=move || loading.get()>
                     {move || {
                         let strings = locale.get().strings();
                         // A payload on screen wins over every transient state: a
@@ -714,7 +724,7 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                         if let Some(payload) = stats.get() {
                             if payload.total == 0 {
                                 return view! {
-                                    <p class="stats-status">{strings.stats_empty}</p>
+                                    <p class="status">{strings.stats_empty}</p>
                                 }
                                     .into_any();
                             }
@@ -725,10 +735,10 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                                 .collect();
 
                             return view! {
-                                <div class="stats-figures">
-                                    <span class="stats-total">{payload.total.to_string()}</span>
-                                    <span class="stats-total-label">{strings.stats_total}</span>
-                                    <span class="stats-unique">
+                                <div class="readout">
+                                    <span class="readout-figure">{payload.total.to_string()}</span>
+                                    <span class="readout-unit">{strings.stats_total}</span>
+                                    <span class="readout-aside">
                                         {format!("{} {}", payload.unique, strings.stats_unique)}
                                     </span>
                                 </div>
@@ -745,7 +755,7 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                         status_line(locale.get(), failed.get()).into_any()
                     }}
                 </div>
-            </StatsShell>
+            </Panel>
         </Show>
     }
 }
@@ -763,9 +773,9 @@ fn ranked_list(title: &'static str, rows: &[ClickSlice], empty: Option<&'static 
             || ().into_any(),
             |message| {
                 view! {
-                    <div class="rank">
+                    <div>
                         <h3 class="rank-title">{title}</h3>
-                        <p class="rank-empty">{message}</p>
+                        <p class="note">{message}</p>
                     </div>
                 }
                 .into_any()
@@ -788,18 +798,25 @@ fn ranked_list(title: &'static str, rows: &[ClickSlice], empty: Option<&'static 
             let title = row.value.clone();
             let clicks = row.clicks.to_string();
 
+            // The measure is a rule *under* the label, not a fill behind it.
+            // Behind the text it read as a selection highlight — the eye saw
+            // "this row is picked" rather than "this row is bigger".
             view! {
                 <li class="rank-row">
-                    <span class="rank-bar" style=format!("width:{width}%")></span>
-                    <span class="rank-value" title=title>{value}</span>
-                    <span class="rank-count">{clicks}</span>
+                    <span class="rank-line">
+                        <span class="rank-value" title=title>{value}</span>
+                        <span class="rank-count">{clicks}</span>
+                    </span>
+                    <span class="rank-measure">
+                        <span style=format!("width:{width}%")></span>
+                    </span>
                 </li>
             }
         })
         .collect();
 
     view! {
-        <div class="rank">
+        <div>
             <h3 class="rank-title">{title}</h3>
             <ul class="rank-list">{items}</ul>
         </div>
@@ -820,7 +837,12 @@ fn breakdown_view(breakdown: &ClickBreakdown, strings: &'static Strings) -> impl
     // the tag it is in.
     let bots = if breakdown.bots > 0 {
         let count = breakdown.bots;
-        view! { <p class="rank-bots">{format!("{count} {}", strings.bots_excluded)}</p> }.into_any()
+        let unit = if count == 1 {
+            strings.bots_excluded_one
+        } else {
+            strings.bots_excluded_many
+        };
+        view! { <p class="footnote">{format!("{count} {unit}")}</p> }.into_any()
     } else {
         ().into_any()
     };
@@ -847,8 +869,8 @@ const LINE_COLORS: [&str; 8] = [
     "#d4693a", "#4f9d69", "#4a7fb5", "#b5544a", "#9a6fb0", "#c9a227", "#5aa9a3", "#8a8f98",
 ];
 
-/// The frame both analytics screens sit in: the click-away veil, the dialog box
-/// and the close button.
+/// The frame every dialog sits in: the click-away veil, the panel, and a head
+/// that is built here rather than supplied.
 ///
 /// Extracted because the two screens had it verbatim, and a modal's semantics are
 /// exactly the kind of thing that drifts when copied — one dialog keeping its
@@ -857,35 +879,59 @@ const LINE_COLORS: [&str; 8] = [
 /// different things to the callers: one clears which link is open, the other flips
 /// a boolean.
 #[component]
-fn StatsShell(
-    #[prop(into)] label: Signal<String>,
+fn Panel(
+    /// What kind of thing this is — "Conta", "Dados do link".
+    #[prop(into)]
+    eyebrow: Signal<String>,
+    /// Which one it is. Also the dialog's accessible name.
+    #[prop(into)]
+    title: Signal<String>,
+    /// Optional third line, for a subject the title cannot carry on its own.
+    #[prop(into, optional)]
+    sub: Option<Signal<String>>,
     #[prop(into)] close_label: Signal<String>,
+    /// Widens the panel for the screens that hold a chart.
+    #[prop(optional)]
+    wide: bool,
     close: Callback<()>,
     children: ChildrenFn,
 ) -> impl IntoView {
     view! {
         <div
-            class="dialog-veil"
+            class="veil"
             role="presentation"
             on:click=move |_| close.run(())
         ></div>
 
         <div
-            class="dialog stats-dialog"
+            class="panel"
+            class:panel--wide=wide
             role="dialog"
             aria-modal="true"
-            aria-label=move || label.get()
+            aria-label=move || title.get()
         >
-            {children()}
+            // The head is built here rather than passed in, which is what makes
+            // this a pattern instead of a wrapper: every dialog gets the same
+            // eyebrow, title and close affordance in the same place, and none of
+            // them can quietly grow a different one.
+            <div class="panel-head">
+                <div class="panel-heading">
+                    <span class="panel-eyebrow">{move || eyebrow.get()}</span>
+                    <h2 class="panel-title">{move || title.get()}</h2>
+                    {sub.map(|sub| view! { <span class="panel-sub">{move || sub.get()}</span> })}
+                </div>
 
-            <button
-                class="dialog-close"
-                type="button"
-                aria-label=move || close_label.get()
-                on:click=move |_| close.run(())
-            >
-                "×"
-            </button>
+                <button
+                    class="panel-close"
+                    type="button"
+                    aria-label=move || close_label.get()
+                    on:click=move |_| close.run(())
+                >
+                    "×"
+                </button>
+            </div>
+
+            {children()}
         </div>
     }
 }
@@ -897,13 +943,13 @@ fn StatsShell(
 #[component]
 fn RangeTabs(days: RwSignal<u32>) -> impl IntoView {
     view! {
-        <div class="stats-tabs" role="tablist">
+        <div class="segment" role="tablist">
             {STATS_WINDOWS
                 .into_iter()
                 .map(|window| {
                     view! {
                         <button
-                            class="stats-tab"
+                            class="segment-option"
                             class:active=move || days.get() == window
                             type="button"
                             role="tab"
@@ -931,7 +977,7 @@ fn status_line(locale: Locale, failed: bool) -> impl IntoView {
         strings.stats_loading
     };
 
-    view! { <p class="stats-status">{message}</p> }
+    view! { <p class="status">{message}</p> }
 }
 
 /// `dd/mm` out of an RFC 3339 day-start, by slice rather than a date parser.
@@ -983,7 +1029,7 @@ fn overview_chart(
             let x = point_x(index).to_string();
             view! {
                 <line
-                    class="chart-grid"
+                    class="plot-grid"
                     x1=x.clone()
                     y1="0"
                     x2=x
@@ -1014,7 +1060,7 @@ fn overview_chart(
 
             view! {
                 <polyline
-                    class="chart-line"
+                    class="plot-line"
                     points=points
                     fill="none"
                     stroke=color
@@ -1033,7 +1079,7 @@ fn overview_chart(
             let x = point_x(index).saturating_sub(half);
             view! {
                 <rect
-                    class="chart-hit"
+                    class="plot-hit"
                     class:active=move || hovered.get() == Some(index)
                     x=x.to_string()
                     y="0"
@@ -1047,7 +1093,7 @@ fn overview_chart(
 
     view! {
         <svg
-            class="chart chart-multi"
+            class="plot plot--lines"
             viewBox=format!("0 0 {CHART_W} {CHART_H}")
             preserveAspectRatio="none"
             role="img"
@@ -1069,20 +1115,31 @@ fn overview_chart(
 /// which would squash text drawn inside them. The full `dd/mm` goes in the hover
 /// readout; the axis carries the day alone so eight of them fit.
 fn day_axis(days: &[String], hovered: RwSignal<Option<usize>>) -> impl IntoView {
+    let columns = days.len().max(1);
+
     let labels: Vec<_> = days
         .iter()
         .enumerate()
         .map(|(index, iso)| {
             let day = iso.get(8..10).unwrap_or("").to_owned();
             view! {
-                <li class="axis-day" class:active=move || hovered.get() == Some(index)>
+                <li class="tick" class:is-active=move || hovered.get() == Some(index)>
                     {day}
                 </li>
             }
         })
         .collect();
 
-    view! { <ul class="chart-axis">{labels}</ul> }
+    // One equal column per day, matching how the plot slices its own width.
+    // The axis used to be a flex row with `space-between`, which spreads labels
+    // by their own widths and left them drifting away from the bars they name —
+    // the further right, the worse. A shared grid is the fix, and it is also the
+    // reason the tick is centred rather than aligned to an edge.
+    view! {
+        <ul class="ticks" style=format!("grid-template-columns:repeat({columns},1fr)")>
+            {labels}
+        </ul>
+    }
 }
 
 /// The hovered day and its exact count, for the single-link screen.
@@ -1099,8 +1156,8 @@ fn day_readout(
     let series = series.to_owned();
 
     view! {
-        <div class="chart-readout">
-            <span class="readout-day">
+        <div class="trace-wrap">
+            <span class="trace">
                 {move || {
                     hovered
                         .get()
@@ -1163,11 +1220,11 @@ fn overview_legend(
     let days = days.to_owned();
 
     view! {
-        <div class="chart-readout">
-            <span class="readout-day">
+        <div class="trace-wrap">
+            <span class="trace">
                 {move || hovered.get().and_then(|index| days.get(index).map(|iso| day_label(iso)))}
             </span>
-            <ul class="chart-legend">{items}</ul>
+            <ul class="legend">{items}</ul>
         </div>
     }
 }
@@ -1215,24 +1272,25 @@ fn OverviewChart(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView 
 
     view! {
         <Show when=move || open.get()>
-            <StatsShell
-                label=Signal::derive(move || locale.get().strings().overview_title.to_owned())
+            <Panel
+                wide=true
+                eyebrow=Signal::derive(move || {
+                    locale.get().strings().vault_account_title.to_owned()
+                })
+                title=Signal::derive(move || locale.get().strings().overview_title.to_owned())
                 close_label=Signal::derive(move || locale.get().strings().close.to_owned())
                 close=Callback::new(move |()| open.set(false))
             >
-                <div class="stats-head">
-                    <span class="stats-code">{move || locale.get().strings().overview_title}</span>
-                </div>
 
                 <RangeTabs days=days />
 
-                <div class="stats-body" class:is-loading=move || loading.get()>
+                <div class="panel-body" class:is-loading=move || loading.get()>
                     {move || {
                         let strings = locale.get().strings();
                         if let Some(payload) = data.get() {
                             if payload.links.is_empty() {
                                 return view! {
-                                    <p class="stats-status">{strings.stats_empty}</p>
+                                    <p class="status">{strings.stats_empty}</p>
                                 }
                                     .into_any();
                             }
@@ -1247,7 +1305,7 @@ fn OverviewChart(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView 
                         status_line(locale.get(), failed.get()).into_any()
                     }}
                 </div>
-            </StatsShell>
+            </Panel>
         </Show>
     }
 }
@@ -1319,8 +1377,9 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
 
     view! {
         <Show when=move || open.get()>
-            <StatsShell
-                label=Signal::derive(move || locale.get().strings().tokens_title.to_owned())
+            <Panel
+                eyebrow=Signal::derive(move || locale.get().strings().account_dialog.to_owned())
+                title=Signal::derive(move || locale.get().strings().tokens_title.to_owned())
                 close_label=Signal::derive(move || locale.get().strings().close.to_owned())
                 close=Callback::new(move |()| {
                     // Dropping the secret on close is the point, not tidiness:
@@ -1329,10 +1388,6 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
                     open.set(false);
                 })
             >
-                <div class="stats-head">
-                    <span class="stats-code">{move || locale.get().strings().tokens_title}</span>
-                    <span class="tokens-note">{move || locale.get().strings().tokens_note}</span>
-                </div>
 
                 {move || {
                     secret
@@ -1340,16 +1395,16 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
                         .map(|value| {
                             let strings = locale.get().strings();
                             view! {
-                                <div class="token-secret" role="alert">
-                                    <code class="token-secret-value">{value}</code>
-                                    <p class="token-secret-warning">{strings.tokens_secret_warning}</p>
+                                <div class="secret" role="alert">
+                                    <code class="secret-value">{value}</code>
+                                    <p class="secret-warning">{strings.tokens_secret_warning}</p>
                                 </div>
                             }
                         })
                 }}
 
                 <form
-                    class="token-form"
+                    class="panel-foot"
                     on:submit=move |ev| {
                         ev.prevent_default();
                         create.dispatch(());
@@ -1372,7 +1427,7 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
                     </label>
 
                     <button
-                        class="composer-submit"
+                        class="btn"
                         type="submit"
                         disabled=move || pending.get() || name.get().trim().is_empty()
                     >
@@ -1383,18 +1438,18 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
                     </button>
                 </form>
 
-                <div class="stats-body">
+                <div class="panel-body">
                     {move || {
                         let strings = locale.get().strings();
 
                         if failed.get() {
-                            return view! { <p class="stats-status">{strings.tokens_error}</p> }
+                            return view! { <p class="status">{strings.tokens_error}</p> }
                                 .into_any();
                         }
 
                         let list = tokens.get();
                         if list.is_empty() {
-                            return view! { <p class="stats-status">{strings.tokens_empty}</p> }
+                            return view! { <p class="status">{strings.tokens_empty}</p> }
                                 .into_any();
                         }
 
@@ -1416,11 +1471,11 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
                                 );
 
                                 view! {
-                                    <li class="token-row">
-                                        <span class="token-name">{token.name}</span>
-                                        <span class="token-meta">{created}" · "{used}</span>
+                                    <li class="row">
+                                        <span class="row-name">{token.name}</span>
+                                        <span class="row-meta">{created}" · "{used}</span>
                                         <button
-                                            class="vault-stats"
+                                            class="btn--quiet"
                                             type="button"
                                             on:click=move |_| {
                                                 revoke.dispatch(id);
@@ -1433,10 +1488,10 @@ fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
                             })
                             .collect();
 
-                        view! { <ul class="token-list">{rows}</ul> }.into_any()
+                        view! { <ul class="rows">{rows}</ul> }.into_any()
                     }}
                 </div>
-            </StatsShell>
+            </Panel>
         </Show>
     }
 }
@@ -1461,7 +1516,7 @@ pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
                 </h2>
                 <Show when=move || !account.links.read().is_empty()>
                     <button
-                        class="vault-stats vault-overview"
+                        class="btn--quiet"
                         type="button"
                         on:click=move |_| overview_open.set(true)
                     >
@@ -1511,7 +1566,7 @@ pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
                                         {target}
                                     </span>
                                     <button
-                                        class="vault-stats"
+                                        class="btn--quiet"
                                         type="button"
                                         aria-label=move || locale.get().strings().stats_open
                                         title=move || locale.get().strings().stats_open
@@ -1528,7 +1583,7 @@ pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
 
             <Show when=move || account.cursor.get().is_some()>
                 <button
-                    class="dialog-switch"
+                    class="btn--link"
                     type="button"
                     on:click=move |_| {
                         more.dispatch(());

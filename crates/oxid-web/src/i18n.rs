@@ -199,8 +199,12 @@ pub struct Strings {
     pub top_referrers: &'static str,
     pub direct_traffic: &'static str,
     /// Named rather than folded into the totals: the number is only meaningful
-    /// if someone can see it was excluded.
-    pub bots_excluded: &'static str,
+    /// if someone can see it was excluded. Two forms, because "1 bots" is the
+    /// kind of detail that makes a screen look unfinished — and the moment a
+    /// third language needs more than two, this catalogue stops being enough
+    /// and the `leptos_i18n` trade in the module header flips.
+    pub bots_excluded_one: &'static str,
+    pub bots_excluded_many: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -274,7 +278,8 @@ static EN: Strings = Strings {
     top_devices: "Devices",
     top_referrers: "Referrers",
     direct_traffic: "No referrer yet.",
-    bots_excluded: "bots, not counted above",
+    bots_excluded_one: "bot, not counted above",
+    bots_excluded_many: "bots, not counted above",
 };
 
 static PT_BR: Strings = Strings {
@@ -348,7 +353,8 @@ static PT_BR: Strings = Strings {
     top_devices: "Dispositivos",
     top_referrers: "Origens",
     direct_traffic: "Nenhuma origem ainda.",
-    bots_excluded: "bots, não contados acima",
+    bots_excluded_one: "bot, não contado acima",
+    bots_excluded_many: "bots, não contados acima",
 };
 
 #[cfg(test)]

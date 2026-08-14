@@ -137,13 +137,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--s4);
 }
 
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--s1);
 }
 
 .icon-link {
@@ -151,7 +151,7 @@ body {
   place-items: center;
   width: 2.25rem;
   height: 2.25rem;
-  border-radius: 0.35rem;
+  border-radius: var(--r-control);
   color: var(--muted);
 }
 
@@ -184,18 +184,18 @@ body {
 
 .langs {
   display: flex;
-  gap: 0.15rem;
+  gap: var(--s1);
 }
 
 .lang {
   min-width: 2.25rem;
   min-height: 2rem;
-  padding-inline: 0.4rem;
+  padding-inline: var(--s2);
   border: 0;
-  border-radius: 0.3rem;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--muted);
-  font: 0.75rem/1 var(--mono);
+  font: var(--t-meta)/1 var(--mono);
   letter-spacing: 0.06em;
   cursor: pointer;
 }
@@ -229,7 +229,7 @@ body {
 .composer {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: var(--s2);
 }
 
 .composer-input {
@@ -238,12 +238,12 @@ body {
   flex: 1 1 16rem;
   min-width: 0;
   min-height: 2.75rem;
-  padding: 0.6rem 0.8rem;
+  padding: var(--s2) var(--s3);
   border: 1px solid var(--edge);
-  border-radius: 0.4rem;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--fg);
-  font: 0.95rem/1.5 var(--mono);
+  font: var(--t-body)/1.5 var(--mono);
 }
 
 .composer-input::placeholder {
@@ -253,12 +253,12 @@ body {
 .composer-submit {
   /* 2.75rem is the mobile touch target floor; the old button was ~40px. */
   min-height: 2.75rem;
-  padding-inline: 1.2rem;
+  padding-inline: var(--s4);
   border: 0;
-  border-radius: 0.4rem;
+  border-radius: var(--r-control);
   background: var(--accent-face);
   color: var(--accent-ink);
-  font: 600 0.95rem/1 var(--mono);
+  font: 600 var(--t-body)/1 var(--mono);
   cursor: pointer;
 }
 
@@ -285,10 +285,10 @@ body {
   display: grid;
   grid-template-columns: 3ch 1fr 3ch;
   align-items: center;
-  gap: 0.7rem;
-  margin-top: 1.4rem;
+  gap: var(--s3);
+  margin-top: var(--s5);
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--t-meta);
   color: var(--muted);
 }
 
@@ -327,14 +327,14 @@ body {
    answer arrives, and no more — reserving the full block left a visible hole. */
 .outcome {
   min-height: 2.5rem;
-  margin-top: 1.1rem;
+  margin-top: var(--s4);
 }
 
 .outcome-ok {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.9rem;
+  gap: var(--s3);
 }
 
 .outcome-link {
@@ -353,12 +353,12 @@ body {
 
 .outcome-copy {
   min-height: 2.25rem;
-  padding-inline: 0.8rem;
+  padding-inline: var(--s3);
   border: 1px solid var(--edge);
-  border-radius: 0.35rem;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--muted);
-  font: 0.8rem/1 var(--mono);
+  font: var(--t-meta)/1 var(--mono);
   cursor: pointer;
 }
 
@@ -387,12 +387,12 @@ body {
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
-  gap: 0.5rem 1rem;
+  gap: var(--s2) var(--s4);
 }
 
 .vault-title {
   margin: 0;
-  font: 600 0.75rem/1.4 var(--mono);
+  font: 600 var(--t-meta)/1.4 var(--mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
@@ -400,7 +400,7 @@ body {
 
 .vault-tally {
   margin: 0;
-  font: 0.78rem/1.4 var(--mono);
+  font: var(--t-meta)/1.4 var(--mono);
   color: var(--muted);
 }
 
@@ -414,13 +414,13 @@ body {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.9rem;
-  padding: 0.65rem 0;
+  gap: var(--s3);
+  padding: var(--s3) 0;
   border-bottom: 1px solid var(--edge);
 }
 
 .vault-code {
-  font: 600 0.95rem/1 var(--mono);
+  font: 600 var(--t-body)/1 var(--mono);
   color: var(--fg);
   text-decoration: none;
 }
@@ -433,7 +433,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.875rem;
+  font-size: var(--t-meta);
   color: var(--muted);
 }
 
@@ -441,7 +441,7 @@ body {
   width: 2.25rem;
   height: 2.25rem;
   border: 0;
-  border-radius: 0.35rem;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--muted);
   font: 1.1rem/1 var(--mono);
@@ -456,13 +456,13 @@ body {
 .vault-empty,
 .vault-note {
   margin: 1rem 0 0;
-  font-size: 0.85rem;
+  font-size: var(--t-meta);
   color: var(--muted);
 }
 
 .vault-warning {
   margin: 0.75rem 0 0;
-  font-size: 0.85rem;
+  font-size: var(--t-meta);
   color: var(--alert);
 }
 
@@ -1095,7 +1095,7 @@ body {
   min-width: 14rem;
   display: flex;
   flex-direction: column;
-  padding: 0.35rem;
+  padding: var(--s1);
   border: 1px solid var(--edge);
   border-radius: 0.5rem;
   background: var(--page);
@@ -1103,13 +1103,13 @@ body {
 }
 
 .menu-item {
-  padding: 0.6rem 0.7rem;
+  padding: var(--s2) var(--s3);
   border: 0;
-  border-radius: 0.35rem;
+  border-radius: var(--r-control);
   background: none;
   color: var(--fg);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: var(--t-body);
   text-align: left;
   white-space: nowrap;
   cursor: pointer;

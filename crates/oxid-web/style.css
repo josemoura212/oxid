@@ -51,6 +51,41 @@
      empty, and still capped: past roughly 75 characters a line of prose gets
      hard to follow back to the next one. */
   --track: min(60rem, 100% - 3rem);
+
+  /* --- Surfaces ---
+   * A dialog is not the page with a border: it sits above it, and the chart
+   * well sits below the dialog — a recess for the instrument to be read in.
+   * Three depths, and nothing has needed a fourth. */
+  --surface: #1c1815;
+  --sunken: #100e0c;
+  --shadow-panel: 0 1.5rem 3rem rgb(0 0 0 / 45%);
+
+  /* --- Spacing, on a 4px base ---
+   * Six steps. This file used to carry twenty-two distinct spacings, each
+   * measured by eye for one component, which is why screens built by the same
+   * hand did not look related. A value outside this scale is now the signal
+   * that something was eyeballed. */
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+
+  /* --- Type, named by role rather than size ---
+   * A token called `0.72rem` invites a neighbour at 0.75rem and there were
+   * fourteen of them. A token called `--t-meta` has one meaning, and a second
+   * size has to argue for itself. */
+  --t-micro: 0.6875rem;
+  --t-meta: 0.8125rem;
+  --t-body: 0.9375rem;
+  --t-title: 1.125rem;
+  --t-figure: 2.25rem;
+
+  /* --- Radius, named by what it wraps --- */
+  --r-control: 0.25rem;
+  --r-panel: 0.625rem;
+  --r-pill: 999px;
 }
 
 @media (prefers-color-scheme: light) {
@@ -62,6 +97,9 @@
     --accent-text: #a34d20;
     --alert: #c0272c;
     --inert: #d9cfc6;
+    --surface: #fffdfb;
+    --sunken: #f2ece6;
+    --shadow-panel: 0 1rem 2.5rem rgb(60 40 25 / 12%);
   }
 }
 
@@ -99,13 +137,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--s4);
 }
 
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--s1);
 }
 
 .icon-link {
@@ -113,7 +151,7 @@ body {
   place-items: center;
   width: 2.25rem;
   height: 2.25rem;
-  border-radius: 0.35rem;
+  border-radius: var(--r-control);
   color: var(--muted);
 }
 
@@ -146,18 +184,18 @@ body {
 
 .langs {
   display: flex;
-  gap: 0.15rem;
+  gap: var(--s1);
 }
 
 .lang {
   min-width: 2.25rem;
   min-height: 2rem;
-  padding-inline: 0.4rem;
+  padding-inline: var(--s2);
   border: 0;
-  border-radius: 0.3rem;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--muted);
-  font: 0.75rem/1 var(--mono);
+  font: var(--t-meta)/1 var(--mono);
   letter-spacing: 0.06em;
   cursor: pointer;
 }
@@ -191,7 +229,7 @@ body {
 .composer {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: var(--s2);
 }
 
 .composer-input {
@@ -200,12 +238,12 @@ body {
   flex: 1 1 16rem;
   min-width: 0;
   min-height: 2.75rem;
-  padding: 0.6rem 0.8rem;
+  padding: var(--s2) var(--s3);
   border: 1px solid var(--edge);
-  border-radius: 0.4rem;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--fg);
-  font: 0.95rem/1.5 var(--mono);
+  font: var(--t-body)/1.5 var(--mono);
 }
 
 .composer-input::placeholder {
@@ -215,12 +253,12 @@ body {
 .composer-submit {
   /* 2.75rem is the mobile touch target floor; the old button was ~40px. */
   min-height: 2.75rem;
-  padding-inline: 1.2rem;
+  padding-inline: var(--s4);
   border: 0;
-  border-radius: 0.4rem;
+  border-radius: var(--r-control);
   background: var(--accent-face);
   color: var(--accent-ink);
-  font: 600 0.95rem/1 var(--mono);
+  font: 600 var(--t-body)/1 var(--mono);
   cursor: pointer;
 }
 
@@ -247,10 +285,10 @@ body {
   display: grid;
   grid-template-columns: 3ch 1fr 3ch;
   align-items: center;
-  gap: 0.7rem;
-  margin-top: 1.4rem;
+  gap: var(--s3);
+  margin-top: var(--s5);
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--t-meta);
   color: var(--muted);
 }
 
@@ -289,14 +327,14 @@ body {
    answer arrives, and no more — reserving the full block left a visible hole. */
 .outcome {
   min-height: 2.5rem;
-  margin-top: 1.1rem;
+  margin-top: var(--s4);
 }
 
 .outcome-ok {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.9rem;
+  gap: var(--s3);
 }
 
 .outcome-link {
@@ -315,12 +353,12 @@ body {
 
 .outcome-copy {
   min-height: 2.25rem;
-  padding-inline: 0.8rem;
+  padding-inline: var(--s3);
   border: 1px solid var(--edge);
-  border-radius: 0.35rem;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--muted);
-  font: 0.8rem/1 var(--mono);
+  font: var(--t-meta)/1 var(--mono);
   cursor: pointer;
 }
 
@@ -349,12 +387,12 @@ body {
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
-  gap: 0.5rem 1rem;
+  gap: var(--s2) var(--s4);
 }
 
 .vault-title {
   margin: 0;
-  font: 600 0.75rem/1.4 var(--mono);
+  font: 600 var(--t-meta)/1.4 var(--mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
@@ -362,7 +400,7 @@ body {
 
 .vault-tally {
   margin: 0;
-  font: 0.78rem/1.4 var(--mono);
+  font: var(--t-meta)/1.4 var(--mono);
   color: var(--muted);
 }
 
@@ -376,13 +414,13 @@ body {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.9rem;
-  padding: 0.65rem 0;
+  gap: var(--s3);
+  padding: var(--s3) 0;
   border-bottom: 1px solid var(--edge);
 }
 
 .vault-code {
-  font: 600 0.95rem/1 var(--mono);
+  font: 600 var(--t-body)/1 var(--mono);
   color: var(--fg);
   text-decoration: none;
 }
@@ -395,7 +433,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.875rem;
+  font-size: var(--t-meta);
   color: var(--muted);
 }
 
@@ -403,7 +441,7 @@ body {
   width: 2.25rem;
   height: 2.25rem;
   border: 0;
-  border-radius: 0.35rem;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--muted);
   font: 1.1rem/1 var(--mono);
@@ -418,13 +456,13 @@ body {
 .vault-empty,
 .vault-note {
   margin: 1rem 0 0;
-  font-size: 0.85rem;
+  font-size: var(--t-meta);
   color: var(--muted);
 }
 
 .vault-warning {
   margin: 0.75rem 0 0;
-  font-size: 0.85rem;
+  font-size: var(--t-meta);
   color: var(--alert);
 }
 
@@ -461,52 +499,142 @@ body {
  * through the component. Two divs and aria-modal say the same thing to a screen
  * reader for now, and the swap is contained if it ever earns its keep.
  */
-.dialog-veil {
+.veil {
   position: fixed;
   inset: 0;
-  background: rgb(0 0 0 / 60%);
+  background: rgb(0 0 0 / 62%);
   z-index: 10;
 }
 
-.dialog {
+/* One anatomy for every dialog in the product: head, body, foot. The login
+   form, the two analytics screens and the token list differ in what fills the
+   body, and in nothing else. Before this they were three shapes that happened
+   to share a border colour. */
+.panel {
   position: fixed;
   top: 50%;
   left: 50%;
   z-index: 11;
-  width: min(26rem, calc(100vw - 2rem));
   transform: translate(-50%, -50%);
-  padding: 1.75rem;
-  border: 1px solid var(--edge);
-  border-radius: 0.75rem;
-  background: var(--page);
-  box-shadow: 0 1.5rem 3rem rgb(0 0 0 / 45%);
-}
-
-.dialog-form {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  width: min(var(--panel-width, 26rem), calc(100vw - var(--s6)));
+  max-height: calc(100svh - var(--s6));
+  border: 1px solid var(--edge);
+  border-radius: var(--r-panel);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
 }
+
+/* Wide is a variant, not a second component. */
+.panel--wide {
+  --panel-width: 34rem;
+}
+
+/* The close button is a member of this row, not floated over it. Positioned
+   absolutely it sat on top of the heading — invisible while the titles are
+   short, and a collision the moment one is not. */
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s5) var(--s5) var(--s4);
+  border-bottom: 1px solid var(--edge);
+}
+
+.panel-heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+/* The eyebrow says what kind of thing this is, the title says which one. Two
+   jobs, so two elements — collapsing them is what left a shortcode doing duty
+   as a heading. */
+.panel-eyebrow {
+  font: 600 var(--t-micro)/1 var(--mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.panel-title {
+  margin: 0;
+  font: 600 var(--t-title)/1.2 var(--mono);
+  color: var(--fg);
+}
+
+.panel-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+
+.panel-body {
+  overflow-y: auto;
+  padding: var(--s5);
+}
+
+.panel-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4) var(--s5) var(--s5);
+  border-top: 1px solid var(--edge);
+}
+
+/* 44px stays: a close affordance that only works with a mouse is the one
+   people on phones need most. The negative offsets pull that hit area back
+   onto the panel's padding so it does not inflate the header. */
+.panel-close {
+  flex: none;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin: calc(var(--s3) * -1) calc(var(--s3) * -1) 0 0;
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.panel-close:hover {
+  color: var(--fg);
+}
+
+/* Controls */
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--s1);
 }
 
 .field-label {
-  font-size: 0.8rem;
+  font: var(--t-micro)/1 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
 .field-input {
-  padding: 0.7rem 0.85rem;
+  min-height: 2.75rem;
+  padding: var(--s2) var(--s3);
   border: 1px solid var(--edge);
-  border-radius: 0.4rem;
-  background: transparent;
+  border-radius: var(--r-control);
+  background: var(--page);
   color: var(--fg);
-  font: inherit;
-  font-size: 0.95rem;
+  font: var(--t-body)/1.4 var(--mono);
+}
+
+.field-input::placeholder {
+  color: var(--muted);
 }
 
 .field-input:focus-visible {
@@ -515,337 +643,219 @@ body {
 }
 
 .field-hint {
-  font-size: 0.75rem;
+  font-size: var(--t-micro);
   color: var(--muted);
 }
 
-.dialog-error {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--accent-text);
+.btn {
+  min-height: 2.75rem;
+  padding: var(--s2) var(--s4);
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--accent-face);
+  color: var(--accent-ink);
+  font: 600 var(--t-body)/1.4 var(--mono);
+  cursor: pointer;
 }
 
-.dialog-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+.btn:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
-.dialog-switch {
-  padding: 0.35rem;
+.btn:disabled {
+  background: var(--inert);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.btn--quiet {
+  min-height: auto;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--muted);
+  font: var(--t-micro)/1.4 var(--mono);
+}
+
+.btn--quiet:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+  filter: none;
+}
+
+.btn--link {
+  min-height: auto;
+  padding: var(--s1);
   border: 0;
   background: none;
   color: var(--muted);
-  font: inherit;
-  font-size: 0.8rem;
+  font: var(--t-meta)/1.4 var(--prose);
   text-decoration: underline;
   cursor: pointer;
 }
 
-.dialog-switch:hover {
+.btn--link:hover {
   color: var(--fg);
+  filter: none;
 }
 
-/* 44px, same as the composer button: a close affordance that only works with a
-   mouse is the one people on phones need most. */
-.dialog-close {
-  position: absolute;
-  top: 0.4rem;
-  right: 0.4rem;
-  width: 44px;
-  height: 44px;
-  border: 0;
-  background: none;
-  color: var(--muted);
-  font-size: 1.4rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.dialog-close:hover {
-  color: var(--fg);
-}
-
-/* Per-link analytics.
- *
- * The row already reserves a third column (the saved-list uses it for "remove");
- * here it holds the button that opens the stats dialog for that link.
- */
-.vault-stats {
-  padding: 0.3rem 0.6rem;
+/* Segmented control: one row of equal parts, so switching a range reads as a
+   range being switched rather than four unrelated buttons. */
+.segment {
+  display: flex;
+  padding: var(--s1);
   border: 1px solid var(--edge);
-  border-radius: 0.35rem;
-  background: transparent;
-  color: var(--muted);
-  font: 0.72rem/1 var(--mono);
-  cursor: pointer;
+  border-radius: var(--r-control);
+  background: var(--sunken);
 }
 
-.vault-stats:hover {
-  color: var(--fg);
-  border-color: var(--muted);
-}
-
-/* Wider than the credentials dialog: the bars need room to read as a series
-   rather than a smear. */
-.stats-dialog {
-  width: min(34rem, calc(100vw - 2rem));
-}
-
-.stats-head {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  margin-bottom: 1.25rem;
-}
-
-.stats-code {
-  font: 600 1.1rem/1 var(--mono);
-  color: var(--fg);
-}
-
-.stats-url {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.stats-url-label {
-  margin-right: 0.35rem;
-}
-
-.stats-tabs {
-  display: flex;
-  gap: 0.4rem;
-  margin-bottom: 1.25rem;
-}
-
-.stats-tab {
+.segment-option {
   flex: 1;
-  padding: 0.45rem 0;
-  border: 1px solid var(--edge);
-  border-radius: 0.4rem;
+  padding: var(--s1) 0;
+  border: 0;
+  border-radius: calc(var(--r-control) - 1px);
   background: transparent;
   color: var(--muted);
-  font: 0.8rem/1 var(--mono);
+  font: var(--t-meta)/1.4 var(--mono);
   cursor: pointer;
 }
 
-.stats-tab:hover {
+.segment-option:hover {
   color: var(--fg);
 }
 
-.stats-tab.active {
+.segment-option[aria-selected="true"] {
   background: var(--accent-face);
   color: var(--accent-ink);
-  border-color: var(--accent-face);
+  font-weight: 600;
 }
 
-.stats-body {
-  min-height: 8rem;
-}
+/* The instrument.
+ *
+ * This is the product's signature surface. What oxid exists to teach is
+ * measurement, so the data reads as an instrument — a baseline, ticks, a
+ * recess — rather than as a card with a number on it. Everything here is
+ * numeric, so everything here is tabular: columns of digits line up instead of
+ * shimmering as the values change. */
 
-/* A window switch refetches under the current chart; this dims it a touch while
-   the new data is on the wire, so the change registers without the old
-   flash-to-empty. */
-.stats-body.is-loading {
-  opacity: 0.6;
-  transition: opacity 120ms ease;
-}
-
-.stats-figures {
+.readout {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  gap: var(--s2);
+  margin-bottom: var(--s4);
+  font-variant-numeric: tabular-nums;
 }
 
-.stats-total {
-  font: 700 2rem/1 var(--mono);
-  color: var(--accent-text);
+.readout-figure {
+  font: 700 var(--t-figure)/1 var(--mono);
+  letter-spacing: -0.02em;
+  color: var(--fg);
 }
 
-.stats-total-label,
-.stats-unique {
-  font-size: 0.8rem;
+.readout-unit {
+  font-size: var(--t-meta);
   color: var(--muted);
 }
 
-.stats-unique {
+.readout-aside {
   margin-left: auto;
-}
-
-.stats-status {
-  margin: 0;
-  padding: 2rem 0;
-  text-align: center;
-  font-size: 0.85rem;
+  font: var(--t-meta)/1 var(--mono);
   color: var(--muted);
 }
 
-.chart {
+/* Recessed, with a baseline the bars stand on — which is what makes a day with
+   no clicks legible as zero rather than as missing data. */
+.well {
+  padding: var(--s3) var(--s3) 0;
+  border: 1px solid var(--edge);
+  border-radius: var(--r-control);
+  background: var(--sunken);
+}
+
+.plot {
   display: block;
   width: 100%;
-  height: 6rem;
+  height: 6.5rem;
 }
 
-.chart-bar {
-  fill: var(--accent-face);
+.plot--lines {
+  height: 7.5rem;
 }
 
-/* Brightens the day under the pointer, so the readout below is unambiguous about
-   which bar it is describing. */
-.chart-bar.active {
-  fill: var(--fg);
-}
-
-/* The overview's multi-line chart. Taller than the single-link bars so eight
-   lines stay legible; the stroke width is fixed in screen pixels by
-   non-scaling-stroke on the element, so the stretched viewBox does not fatten
-   it. */
-.chart-multi {
-  height: 7rem;
-}
-
-.chart-line {
-  stroke-width: 1.5;
-  fill: none;
-}
-
-/* One divider per day, faint enough to read as a grid rather than as data. */
-.chart-grid {
+.plot-grid {
   stroke: var(--edge);
   stroke-width: 1;
 }
 
-/* The hover target for a day: transparent until the pointer is on it, at which
-   point it becomes the column highlight. `pointer-events: all` is what lets a
-   fill-less rect be hit at all. */
-.chart-hit {
+.plot-base {
+  stroke: var(--muted);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.plot-bar {
+  fill: var(--accent-face);
+}
+
+/* A day nobody clicked draws a rule on the baseline instead of nothing at all.
+   No fill was indistinguishable from no data. */
+.plot-bar.is-empty {
+  fill: var(--edge);
+}
+
+.plot-line {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+/* Transparent until hovered, when it becomes the column highlight. The bar
+   itself does not also change colour — that was the same signal twice. */
+.plot-hit {
   fill: transparent;
   pointer-events: all;
   cursor: crosshair;
 }
 
-.chart-hit.active {
-  fill: color-mix(in srgb, var(--fg) 8%, transparent);
+.plot-hit.is-active {
+  fill: color-mix(in srgb, var(--fg) 7%, transparent);
 }
 
-.chart-axis {
-  display: flex;
-  justify-content: space-between;
-  margin: 0.3rem 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.axis-day {
-  font: 0.65rem/1 var(--mono);
-  color: var(--muted);
-}
-
-.axis-day.active {
-  color: var(--fg);
-}
-
-.chart-readout {
-  margin-top: 0.9rem;
-}
-
-/* The three ranked lists. Auto-fit rather than three fixed columns: with only
-   one list worth showing it takes the full width instead of leaving two gaps,
-   and on a phone they stack without a media query. */
-.ranks {
+/* Ticks share the plot's own grid rather than `space-between`, which is what
+   drifted them out of line with the columns they label. */
+.ticks {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: 1.25rem;
-  margin-top: 1.5rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--edge);
+  margin: var(--s1) 0 0;
+  padding: 0 var(--s3) var(--s2);
+  list-style: none;
+  font-variant-numeric: tabular-nums;
 }
 
-.rank-title {
-  margin: 0 0 0.5rem;
-  font: 600 0.7rem/1 var(--mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.tick {
+  grid-row: 1;
+  text-align: center;
+  font: var(--t-micro)/1 var(--mono);
   color: var(--muted);
 }
 
-.rank-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* The bar is positioned behind the text rather than beside it, so a long value
-   keeps the full width to be read in and the ratio still shows through. */
-.rank-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.4rem;
-  border-radius: 0.25rem;
-  font: 0.75rem/1.3 var(--mono);
-}
-
-.rank-bar {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: 0.25rem;
-  background: color-mix(in srgb, var(--accent-face) 22%, transparent);
-}
-
-.rank-value,
-.rank-count {
-  position: relative;
-}
-
-.rank-value {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.tick.is-active {
   color: var(--fg);
 }
 
-.rank-count {
-  color: var(--muted);
-}
-
-.rank-empty {
-  margin: 0;
-  font-size: 0.72rem;
-  color: var(--muted);
-}
-
-.rank-bots {
-  margin: 1rem 0 0;
-  font: 0.72rem/1 var(--mono);
-  color: var(--muted);
-}
-
-/* Reserves its line whether or not a day is hovered, so the legend below does not
-   jump as the pointer crosses the chart. */
-.readout-day {
-  display: block;
-  min-height: 1rem;
-  font: 0.72rem/1 var(--mono);
+/* Reserves its line whether or not a day is hovered, so nothing below jumps as
+   the pointer crosses the plot. */
+.trace {
+  min-height: 1.1rem;
+  margin: var(--s3) 0 0;
+  font: var(--t-meta)/1 var(--mono);
+  font-variant-numeric: tabular-nums;
   color: var(--accent-text);
 }
 
-.chart-legend {
+.legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem 0.9rem;
-  /* No top margin: the readout wrapper owns the spacing above it. */
-  margin: 0.35rem 0 0;
+  gap: var(--s2) var(--s4);
+  margin: var(--s3) 0 0;
   padding: 0;
   list-style: none;
 }
@@ -853,8 +863,9 @@ body {
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  font: 0.72rem/1 var(--mono);
+  gap: var(--s1);
+  font: var(--t-micro)/1 var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .legend-swatch {
@@ -870,6 +881,184 @@ body {
 .legend-total {
   color: var(--muted);
 }
+
+/* Ranked lists.
+ *
+ * The measure is a rule under the label, not a fill behind it. Behind the text
+ * it read as a selection highlight — the eye saw "this row is picked" rather
+ * than "this row is bigger". */
+
+.ranks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--s4);
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--edge);
+}
+
+.rank-title {
+  margin: 0 0 var(--s2);
+  font: 600 var(--t-micro)/1 var(--mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rank-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  font-variant-numeric: tabular-nums;
+}
+
+.rank-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  font: var(--t-meta)/1.3 var(--mono);
+}
+
+.rank-value {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+.rank-count {
+  color: var(--muted);
+}
+
+.rank-measure {
+  height: 2px;
+  border-radius: var(--r-pill);
+  background: var(--edge);
+}
+
+.rank-measure > span {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent-face);
+}
+
+/* Rows — tokens, and anything else that is a list of one kind of thing. */
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s1) var(--s3);
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--edge);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row-name {
+  font: 600 var(--t-body)/1.2 var(--mono);
+  color: var(--fg);
+}
+
+.row-meta {
+  grid-column: 1;
+  font: var(--t-micro)/1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.row-action {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+/* A column of fields at the body's own rhythm. Named rather than repeated as
+   an inline flex on every form. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+/* Prose and states inside a panel. */
+
+.note {
+  margin: 0;
+  font-size: var(--t-meta);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.status {
+  margin: 0;
+  padding: var(--s6) 0;
+  text-align: center;
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+
+.status--error {
+  color: var(--accent-text);
+}
+
+.footnote {
+  margin: var(--s4) 0 0;
+  font: var(--t-micro)/1.4 var(--mono);
+  color: var(--muted);
+}
+
+/* Dims the body a touch while a refetch is in flight, so a range change
+   registers without the old flash-to-empty. */
+.is-loading {
+  opacity: 0.6;
+  transition: opacity 120ms ease;
+}
+
+/* The one-time secret. Loud on purpose: this is the only moment the value
+   exists, and a quiet treatment would be a lie about that. */
+.secret {
+  margin-bottom: var(--s4);
+  padding: var(--s3);
+  border: 1px solid var(--accent-face);
+  border-radius: var(--r-control);
+  background: color-mix(in srgb, var(--accent-face) 10%, transparent);
+}
+
+.secret-value {
+  display: block;
+  overflow-wrap: anywhere;
+  font: var(--t-meta)/1.5 var(--mono);
+  color: var(--fg);
+}
+
+.secret-warning {
+  margin: var(--s2) 0 0;
+  font: var(--t-micro)/1.45 var(--prose);
+  color: var(--accent-text);
+}
+
+
 
 /* Account menu (top bar).
  *
@@ -906,7 +1095,7 @@ body {
   min-width: 14rem;
   display: flex;
   flex-direction: column;
-  padding: 0.35rem;
+  padding: var(--s1);
   border: 1px solid var(--edge);
   border-radius: 0.5rem;
   background: var(--page);
@@ -914,13 +1103,13 @@ body {
 }
 
 .menu-item {
-  padding: 0.6rem 0.7rem;
+  padding: var(--s2) var(--s3);
   border: 0;
-  border-radius: 0.35rem;
+  border-radius: var(--r-control);
   background: none;
   color: var(--fg);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: var(--t-body);
   text-align: left;
   white-space: nowrap;
   cursor: pointer;

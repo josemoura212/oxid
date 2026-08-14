@@ -9,8 +9,9 @@
 
 use gloo_net::http::{Request, Response};
 use oxid_shared::{
-    AccountResponse, ClickStats, CredentialsRequest, ImportRequest, ImportResponse, LinkPage,
-    OverviewStats, ProblemDetails, ShortenRequest, ShortenResponse,
+    AccountResponse, ApiTokenSummary, ClickStats, CreateTokenRequest, CreatedToken,
+    CredentialsRequest, ImportRequest, ImportResponse, LinkPage, OverviewStats, ProblemDetails,
+    ShortenRequest, ShortenResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -136,4 +137,31 @@ pub async fn link_stats(code: &str, days: u32) -> Result<ClickStats, String> {
 /// aggregate counterpart to [`link_stats`].
 pub async fn overview(days: u32) -> Result<OverviewStats, String> {
     get(&format!("/v1/urls/overview?days={days}")).await
+}
+
+/// The account's API tokens. Never carries a secret — the server only has digests.
+pub async fn list_tokens() -> Result<Vec<ApiTokenSummary>, String> {
+    get("/v1/tokens").await
+}
+
+/// Mints a token. The response is the one and only time the secret exists
+/// outside the caller's hands, which is why it is returned rather than stored.
+pub async fn create_token(name: String) -> Result<CreatedToken, String> {
+    post("/v1/tokens", &CreateTokenRequest { name }).await
+}
+
+/// Revokes a token. Answers 204 with no body, so there is nothing to read — but
+/// the status is checked, because telling someone a leaked credential is dead
+/// when it is not is the worst possible lie here.
+pub async fn revoke_token(id: i64) -> Result<(), String> {
+    let response = Request::delete(&format!("/v1/tokens/{id}"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if response.ok() {
+        Ok(())
+    } else {
+        Err(format!("{} {}", response.status(), response.status_text()))
+    }
 }

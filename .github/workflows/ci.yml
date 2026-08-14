@@ -45,6 +45,60 @@ jobs:
       - name: Clippy (front end)
         run: cargo clippy -p oxid-web --target wasm32-unknown-unknown --all-targets -- -D warnings
 
+  extension:
+    name: extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - run: npm ci
+        working-directory: extension
+
+      # Type check and build are one step on purpose: the build runs `tsc`, so a
+      # green build already means the types hold. Splitting them would run the
+      # compiler twice to learn the same thing.
+      - name: Build all three
+        working-directory: extension
+        run: npm run build
+
+      # The three differ only in their manifest, so the check that matters is
+      # that each one *has* a valid manifest declaring the right entry point —
+      # a build that silently produced two identical Chrome bundles would look
+      # fine until Firefox refused to load one.
+      - name: Every browser got its own manifest
+        working-directory: extension
+        run: |
+          node --input-type=module -e '
+            import { readFile } from "node:fs/promises";
+            const expected = {
+              chrome: (m) => m.background.service_worker === "background.js",
+              firefox: (m) => Array.isArray(m.background.scripts)
+                && m.browser_specific_settings?.gecko?.id,
+              safari: (m) => m.background.service_worker === "background.js",
+            };
+            for (const [browser, ok] of Object.entries(expected)) {
+              const manifest = JSON.parse(
+                await readFile(`dist/${browser}/manifest.json`, "utf8"),
+              );
+              if (manifest.manifest_version !== 3 || !ok(manifest)) {
+                throw new Error(`${browser}: manifest is not what it should be`);
+              }
+              console.log(`${browser}: ok`);
+            }
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: extension/dist/
+          retention-days: 14
+
   test:
     name: tests
     runs-on: ubuntu-latest

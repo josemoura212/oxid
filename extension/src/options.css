@@ -1,0 +1,302 @@
+/* The extension's one screen, on the site's own design tokens.
+ *
+ * Copied rather than imported: an extension cannot reach the site's stylesheet,
+ * and vendoring the handful of tokens it uses is smaller than any mechanism for
+ * sharing them would be. The comment that matters is this one — if the palette
+ * moves, it moves here too.
+ */
+
+:root {
+  color-scheme: dark light;
+
+  --page: #14110e;
+  --edge: #2e2823;
+  --fg: #ece8e3;
+  --muted: #a29890;
+
+  /* Face is the surface colour, ink is what sits on top of it, text is the
+     accent when it has to be readable against the page. They are three roles,
+     and collapsing them into one token is what broke the contrast before. */
+  --accent-face: #d4693a;
+  --accent-ink: #1a1206;
+  --accent-text: #d4693a;
+
+  --alert: #f0656a;
+  --inert: #4a423b;
+
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* One track shared by the bar and the content, so they always align.
+     Wider than the 46rem it started at, which left most of a laptop screen
+     empty, and still capped: past roughly 75 characters a line of prose gets
+     hard to follow back to the next one. */
+  --track: min(60rem, 100% - 3rem);
+
+  /* --- Surfaces ---
+   * A dialog is not the page with a border: it sits above it, and the chart
+   * well sits below the dialog — a recess for the instrument to be read in.
+   * Three depths, and nothing has needed a fourth. */
+  --surface: #1c1815;
+  --sunken: #100e0c;
+  --shadow-panel: 0 1.5rem 3rem rgb(0 0 0 / 45%);
+
+  /* --- Spacing, on a 4px base ---
+   * Six steps. This file used to carry twenty-two distinct spacings, each
+   * measured by eye for one component, which is why screens built by the same
+   * hand did not look related. A value outside this scale is now the signal
+   * that something was eyeballed. */
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+
+  /* --- Type, named by role rather than size ---
+   * A token called `0.72rem` invites a neighbour at 0.75rem and there were
+   * fourteen of them. A token called `--t-meta` has one meaning, and a second
+   * size has to argue for itself. */
+  --t-micro: 0.6875rem;
+  --t-meta: 0.8125rem;
+  --t-body: 0.9375rem;
+  --t-title: 1.125rem;
+  --t-figure: 2.25rem;
+
+  /* --- Radius, named by what it wraps --- */
+  --r-control: 0.25rem;
+  --r-panel: 0.625rem;
+  --r-pill: 999px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --page: #faf7f4;
+    --edge: #e7ded6;
+    --fg: #1c1815;
+    --muted: #6b615a;
+    --accent-text: #a34d20;
+    --alert: #c0272c;
+    --inert: #d9cfc6;
+    --surface: #fffdfb;
+    --sunken: #f2ece6;
+    --shadow-panel: 0 1rem 2.5rem rgb(60 40 25 / 12%);
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --page: #faf7f4;
+    --edge: #e7ded6;
+    --fg: #1c1815;
+    --muted: #6b615a;
+    --accent-text: #a34d20;
+    --alert: #c0272c;
+    --inert: #d9cfc6;
+    --surface: #fffdfb;
+    --sunken: #f2ece6;
+    --shadow-panel: 0 1rem 2.5rem rgb(60 40 25 / 12%);
+  }
+}
+
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: var(--s6) var(--s4);
+  display: flex;
+  justify-content: center;
+  background: var(--page);
+  color: var(--fg);
+  font: 16px/1.6 var(--prose);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Static, not fixed: this is a page, not a dialog over one. Everything else
+   about it is the same panel the site uses. */
+.panel {
+  position: static;
+  transform: none;
+  width: min(30rem, 100%);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-panel);
+  background: var(--surface);
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s5) var(--s5) var(--s4);
+  border-bottom: 1px solid var(--edge);
+}
+
+.panel-heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+/* The eyebrow says what kind of thing this is, the title says which one. Two
+   jobs, so two elements — collapsing them is what left a shortcode doing duty
+   as a heading. */
+.panel-eyebrow {
+  font: 600 var(--t-micro)/1 var(--mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.panel-title {
+  margin: 0;
+  font: 600 var(--t-title)/1.2 var(--mono);
+  color: var(--fg);
+}
+
+.panel-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+
+.panel-body {
+  overflow-y: auto;
+  padding: var(--s5);
+}
+
+.panel-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4) var(--s5) var(--s5);
+  border-top: 1px solid var(--edge);
+}
+
+/* 44px stays: a close affordance that only works with a mouse is the one
+   people on phones need most. The negative offsets pull that hit area back
+   onto the panel's padding so it does not inflate the header. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.field-label {
+  font: var(--t-micro)/1 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.field-input {
+  min-height: 2.75rem;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-control);
+  background: var(--page);
+  color: var(--fg);
+  font: var(--t-body)/1.4 var(--mono);
+}
+
+.field-input::placeholder {
+  color: var(--muted);
+}
+
+.field-input:focus-visible {
+  outline: 2px solid var(--accent-face);
+  outline-offset: 1px;
+}
+
+.field-hint {
+  font-size: var(--t-micro);
+  color: var(--muted);
+}
+
+.btn {
+  min-height: 2.75rem;
+  padding: var(--s2) var(--s4);
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--accent-face);
+  color: var(--accent-ink);
+  font: 600 var(--t-body)/1.4 var(--mono);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.btn:disabled {
+  background: var(--inert);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.btn--quiet {
+  min-height: auto;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--muted);
+  font: var(--t-micro)/1.4 var(--mono);
+}
+
+.btn--quiet:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+  filter: none;
+}
+
+.btn--link {
+  min-height: auto;
+  padding: var(--s1);
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: var(--t-meta)/1.4 var(--prose);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.btn--link:hover {
+  color: var(--fg);
+  filter: none;
+}
+
+/* Segmented control: one row of equal parts, so switching a range reads as a
+   range being switched rather than four unrelated buttons. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+/* Prose and states inside a panel. */
+
+.note {
+  margin: 0;
+  font-size: var(--t-meta);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.status {
+  margin: 0;
+  padding: var(--s6) 0;
+  text-align: center;
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+
+.status--error {
+  color: var(--accent-text);
+}
+

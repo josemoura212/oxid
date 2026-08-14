@@ -176,13 +176,35 @@ pub struct Strings {
     /// this one labels a single day in the hover readout, where "total" would
     /// be plainly wrong.
     pub stats_day_clicks: &'static str,
+
+    // API tokens.
+    pub tokens_menu: &'static str,
+    pub tokens_title: &'static str,
+    pub tokens_note: &'static str,
+    pub tokens_empty: &'static str,
+    pub tokens_name_label: &'static str,
+    pub tokens_name_placeholder: &'static str,
+    pub tokens_create: &'static str,
+    pub tokens_creating: &'static str,
+    /// The sentence that has to land before the dialog closes: the secret is not
+    /// recoverable, so "copy it now" is the whole instruction.
+    pub tokens_secret_warning: &'static str,
+    pub tokens_revoke: &'static str,
+    pub tokens_never_used: &'static str,
+    pub tokens_used_prefix: &'static str,
+    pub tokens_created_prefix: &'static str,
+    pub tokens_error: &'static str,
     pub top_countries: &'static str,
     pub top_devices: &'static str,
     pub top_referrers: &'static str,
     pub direct_traffic: &'static str,
     /// Named rather than folded into the totals: the number is only meaningful
-    /// if someone can see it was excluded.
-    pub bots_excluded: &'static str,
+    /// if someone can see it was excluded. Two forms, because "1 bots" is the
+    /// kind of detail that makes a screen look unfinished — and the moment a
+    /// third language needs more than two, this catalogue stops being enough
+    /// and the `leptos_i18n` trade in the module header flips.
+    pub bots_excluded_one: &'static str,
+    pub bots_excluded_many: &'static str,
 }
 
 static EN: Strings = Strings {
@@ -237,11 +259,27 @@ static EN: Strings = Strings {
     overview_open: "Overview",
     overview_title: "All your links",
     stats_day_clicks: "clicks this day",
+
+    tokens_menu: "API tokens",
+    tokens_title: "API tokens",
+    tokens_note: "For the browser extension and anything else that is not this site. A token shortens into your account and can be revoked on its own, without signing you out anywhere.",
+    tokens_empty: "No tokens yet.",
+    tokens_name_label: "Name",
+    tokens_name_placeholder: "laptop extension",
+    tokens_create: "Create token",
+    tokens_creating: "Creating",
+    tokens_secret_warning: "Copy it now — this is the only time it is shown. The server keeps a fingerprint, not the token, and cannot show it again.",
+    tokens_revoke: "Revoke",
+    tokens_never_used: "never used",
+    tokens_used_prefix: "last used",
+    tokens_created_prefix: "created",
+    tokens_error: "Could not load the tokens.",
     top_countries: "Countries",
     top_devices: "Devices",
     top_referrers: "Referrers",
     direct_traffic: "No referrer yet.",
-    bots_excluded: "bots, not counted above",
+    bots_excluded_one: "bot, not counted above",
+    bots_excluded_many: "bots, not counted above",
 };
 
 static PT_BR: Strings = Strings {
@@ -296,11 +334,27 @@ static PT_BR: Strings = Strings {
     overview_open: "Dados gerais",
     overview_title: "Todos os seus links",
     stats_day_clicks: "cliques neste dia",
+
+    tokens_menu: "Tokens de API",
+    tokens_title: "Tokens de API",
+    tokens_note: "Para a extensão do navegador e qualquer coisa que não seja este site. Um token encurta na sua conta e pode ser revogado sozinho, sem deslogar você de lugar nenhum.",
+    tokens_empty: "Nenhum token ainda.",
+    tokens_name_label: "Nome",
+    tokens_name_placeholder: "extensão do notebook",
+    tokens_create: "Criar token",
+    tokens_creating: "Criando",
+    tokens_secret_warning: "Copie agora — esta é a única vez que ele aparece. O servidor guarda uma impressão digital, não o token, e não consegue mostrá-lo de novo.",
+    tokens_revoke: "Revogar",
+    tokens_never_used: "nunca usado",
+    tokens_used_prefix: "usado",
+    tokens_created_prefix: "criado",
+    tokens_error: "Não foi possível carregar os tokens.",
     top_countries: "Países",
     top_devices: "Dispositivos",
     top_referrers: "Origens",
     direct_traffic: "Nenhuma origem ainda.",
-    bots_excluded: "bots, não contados acima",
+    bots_excluded_one: "bot, não contado acima",
+    bots_excluded_many: "bots, não contados acima",
 };
 
 #[cfg(test)]

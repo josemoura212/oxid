@@ -2,7 +2,8 @@
 
 use leptos::prelude::*;
 use oxid_shared::{
-    ClickBreakdown, ClickPoint, ClickSlice, ClickStats, OverviewLink, OverviewStats, OwnedLink,
+    ApiTokenSummary, ClickBreakdown, ClickPoint, ClickSlice, ClickStats, MAX_TOKEN_NAME_LEN,
+    OverviewLink, OverviewStats, OwnedLink,
 };
 
 use crate::{
@@ -149,6 +150,9 @@ pub fn AccountButton(
     // menu is open, and keeping it here means the veil and the toggle share one
     // signal without threading it through the tree.
     let menu_open = RwSignal::new(false);
+    // Same reasoning for the tokens dialog — it is opened from this menu and
+    // from nowhere else.
+    let tokens_open = RwSignal::new(false);
 
     let sign_out = Action::new_local(move |(): &()| async move {
         let _ = api::logout().await;
@@ -205,6 +209,17 @@ pub fn AccountButton(
                             type="button"
                             role="menuitem"
                             on:click=move |_| {
+                                menu_open.set(false);
+                                tokens_open.set(true);
+                            }
+                        >
+                            {move || locale.get().strings().tokens_menu}
+                        </button>
+                        <button
+                            class="menu-item"
+                            type="button"
+                            role="menuitem"
+                            on:click=move |_| {
                                 sign_out.dispatch(());
                             }
                         >
@@ -223,6 +238,8 @@ pub fn AccountButton(
                     </div>
                 </Show>
             </div>
+
+            <TokensDialog open=tokens_open locale=locale />
         </Show>
     }
 }
@@ -1228,6 +1245,195 @@ fn OverviewChart(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView 
                         }
 
                         status_line(locale.get(), failed.get()).into_any()
+                    }}
+                </div>
+            </StatsShell>
+        </Show>
+    }
+}
+
+/// Minting, listing and revoking the account's API tokens.
+///
+/// The secret lives in a signal here and nowhere else — not in the list, not in
+/// storage. Closing the dialog drops it, which mirrors the server: it kept a
+/// digest and cannot produce the token again either. That is why the warning
+/// beside it is a sentence and not a hint.
+#[component]
+fn TokensDialog(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView {
+    let tokens = RwSignal::new(Vec::<ApiTokenSummary>::new());
+    let failed = RwSignal::new(false);
+    let name = RwSignal::new(String::new());
+    // The freshly minted secret, shown once. Cleared when the dialog closes.
+    let secret = RwSignal::new(None::<String>);
+
+    let reload = Action::new_local(move |(): &()| async move {
+        match api::list_tokens().await {
+            Ok(list) => {
+                tokens.set(list);
+                failed.set(false);
+            }
+            Err(error) => {
+                leptos::logging::warn!("could not load tokens: {error}");
+                failed.set(true);
+            }
+        }
+    });
+
+    let create = Action::new_local(move |(): &()| {
+        let wanted = name.get().trim().to_owned();
+        async move {
+            if wanted.is_empty() {
+                return;
+            }
+
+            match api::create_token(wanted).await {
+                Ok(created) => {
+                    secret.set(Some(created.secret));
+                    name.set(String::new());
+                    reload.dispatch(());
+                }
+                Err(error) => leptos::logging::warn!("could not create token: {error}"),
+            }
+        }
+    });
+
+    let revoke = Action::new_local(move |id: &i64| {
+        let id = *id;
+        async move {
+            match api::revoke_token(id).await {
+                Ok(()) => {
+                    reload.dispatch(());
+                }
+                Err(error) => leptos::logging::warn!("could not revoke token: {error}"),
+            }
+        }
+    });
+
+    Effect::new(move |_| {
+        if open.get() {
+            reload.dispatch(());
+        }
+    });
+
+    let pending = create.pending();
+
+    view! {
+        <Show when=move || open.get()>
+            <StatsShell
+                label=Signal::derive(move || locale.get().strings().tokens_title.to_owned())
+                close_label=Signal::derive(move || locale.get().strings().close.to_owned())
+                close=Callback::new(move |()| {
+                    // Dropping the secret on close is the point, not tidiness:
+                    // leaving it on screen would make it look recoverable.
+                    secret.set(None);
+                    open.set(false);
+                })
+            >
+                <div class="stats-head">
+                    <span class="stats-code">{move || locale.get().strings().tokens_title}</span>
+                    <span class="tokens-note">{move || locale.get().strings().tokens_note}</span>
+                </div>
+
+                {move || {
+                    secret
+                        .get()
+                        .map(|value| {
+                            let strings = locale.get().strings();
+                            view! {
+                                <div class="token-secret" role="alert">
+                                    <code class="token-secret-value">{value}</code>
+                                    <p class="token-secret-warning">{strings.tokens_secret_warning}</p>
+                                </div>
+                            }
+                        })
+                }}
+
+                <form
+                    class="token-form"
+                    on:submit=move |ev| {
+                        ev.prevent_default();
+                        create.dispatch(());
+                    }
+                >
+                    <label class="field" for="token-name">
+                        <span class="field-label">
+                            {move || locale.get().strings().tokens_name_label}
+                        </span>
+                        <input
+                            id="token-name"
+                            class="field-input"
+                            type="text"
+                            required
+                            maxlength=MAX_TOKEN_NAME_LEN.to_string()
+                            placeholder=move || locale.get().strings().tokens_name_placeholder
+                            prop:value=move || name.get()
+                            on:input:target=move |ev| name.set(ev.target().value())
+                        />
+                    </label>
+
+                    <button
+                        class="composer-submit"
+                        type="submit"
+                        disabled=move || pending.get() || name.get().trim().is_empty()
+                    >
+                        {move || {
+                            let strings = locale.get().strings();
+                            if pending.get() { strings.tokens_creating } else { strings.tokens_create }
+                        }}
+                    </button>
+                </form>
+
+                <div class="stats-body">
+                    {move || {
+                        let strings = locale.get().strings();
+
+                        if failed.get() {
+                            return view! { <p class="stats-status">{strings.tokens_error}</p> }
+                                .into_any();
+                        }
+
+                        let list = tokens.get();
+                        if list.is_empty() {
+                            return view! { <p class="stats-status">{strings.tokens_empty}</p> }
+                                .into_any();
+                        }
+
+                        let rows: Vec<_> = list
+                            .into_iter()
+                            .map(|token| {
+                                let id = token.id;
+                                let used = token
+                                    .last_used_at
+                                    .as_deref()
+                                    .map_or_else(
+                                        || strings.tokens_never_used.to_owned(),
+                                        |at| format!("{} {}", strings.tokens_used_prefix, day_label(at)),
+                                    );
+                                let created = format!(
+                                    "{} {}",
+                                    strings.tokens_created_prefix,
+                                    day_label(&token.created_at),
+                                );
+
+                                view! {
+                                    <li class="token-row">
+                                        <span class="token-name">{token.name}</span>
+                                        <span class="token-meta">{created}" · "{used}</span>
+                                        <button
+                                            class="vault-stats"
+                                            type="button"
+                                            on:click=move |_| {
+                                                revoke.dispatch(id);
+                                            }
+                                        >
+                                            {strings.tokens_revoke}
+                                        </button>
+                                    </li>
+                                }
+                            })
+                            .collect();
+
+                        view! { <ul class="token-list">{rows}</ul> }.into_any()
                     }}
                 </div>
             </StatsShell>

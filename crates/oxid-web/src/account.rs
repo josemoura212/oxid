@@ -736,13 +736,7 @@ fn LinkStats(active: RwSignal<Option<OwnedLink>>, locale: Signal<Locale>) -> imp
                                 .collect();
 
                             return view! {
-                                <div class="readout">
-                                    <span class="readout-figure">{payload.total.to_string()}</span>
-                                    <span class="readout-unit">{strings.stats_total}</span>
-                                    <span class="readout-aside">
-                                        {format!("{} {}", payload.unique, strings.stats_unique)}
-                                    </span>
-                                </div>
+                                {readout(payload.total, payload.unique, strings)}
                                 {chart(&payload.series, strings.stats_title, hovered)}
                                 {day_axis(&axis, hovered)}
                                 {day_readout(&payload.series, strings, hovered)}
@@ -993,6 +987,60 @@ fn day_label(iso: &str) -> String {
     format!("{day}/{month}")
 }
 
+/// The stacked height of each day: every link's clicks for that index, summed.
+///
+/// Both the chart and the legend need it — the chart to scale the bars, the
+/// legend to name the number under the pointer — and they need the *same* one.
+/// Written twice they would drift, and a legend disagreeing with the bar above
+/// it is the kind of bug nobody reports because it just looks like a rounding
+/// error.
+///
+/// The axis length comes from the first link rather than from `days`: every
+/// link's `clicks` is dense and the same length by contract, and a link's own
+/// series is what the chart actually indexes.
+fn day_totals(links: &[OverviewLink]) -> Vec<u64> {
+    let axis = links.first().map_or(0, |link| link.clicks.len());
+
+    (0..axis)
+        .map(|index| {
+            links.iter().fold(0_u64, |sum, link| {
+                sum.saturating_add(link.clicks.get(index).copied().unwrap_or(0))
+            })
+        })
+        .collect()
+}
+
+/// A link's share of one day, in chart units.
+///
+/// Floored at 1 for any non-zero count so a single click stays a visible sliver
+/// on a day somebody else dominates. Rounding it away would show a click that
+/// the legend then insists happened.
+fn band_height(clicks: u64, max: u64) -> u64 {
+    if clicks == 0 {
+        return 0;
+    }
+
+    clicks
+        .saturating_mul(CHART_H)
+        .checked_div(max)
+        .unwrap_or(0)
+        .max(1)
+}
+
+/// The two figures every stats screen opens with.
+///
+/// Shared because both dialogs ask the same question and answered it with the
+/// same markup written twice. Identical is worth naming.
+fn readout(total: u64, unique: u64, strings: &'static Strings) -> impl IntoView {
+    view! {
+        <div class="readout">
+            <span class="readout-figure">{total.to_string()}</span>
+            <span class="readout-unit">{strings.stats_total}</span>
+            <span class="readout-aside">{format!("{unique} {}", strings.stats_unique)}</span>
+        </div>
+    }
+}
+
 /// One stacked bar per day, segmented by link.
 ///
 /// **This was a line per link and the lines hid each other.** Two links with one
@@ -1023,13 +1071,7 @@ fn overview_chart(
 
     // The tallest stack, not the busiest single link: the bars are totals now, so
     // scaling to a link's own maximum would push every stack off the top.
-    let totals: Vec<u64> = (0..axis)
-        .map(|index| {
-            links.iter().fold(0_u64, |sum, link| {
-                sum.saturating_add(link.clicks.get(index).copied().unwrap_or(0))
-            })
-        })
-        .collect();
+    let totals = day_totals(links);
     let max = totals.iter().copied().max().unwrap_or(0).max(1);
 
     let count = u64::try_from(axis).unwrap_or(0);
@@ -1056,11 +1098,7 @@ fn overview_chart(
                         return None;
                     }
 
-                    let height = clicks
-                        .saturating_mul(CHART_H)
-                        .checked_div(max)
-                        .unwrap_or(0)
-                        .max(1);
+                    let height = band_height(clicks, max);
                     let y = top.saturating_sub(height);
                     top = y;
 
@@ -1256,13 +1294,7 @@ fn overview_legend(
     // The stacked height, so the sentence names the same number the bar draws.
     // It used to stop at the date, which left the one figure the chart is built
     // around readable only by eye.
-    let totals: Vec<u64> = (0..days.len())
-        .map(|index| {
-            links.iter().fold(0_u64, |sum, link| {
-                sum.saturating_add(link.clicks.get(index).copied().unwrap_or(0))
-            })
-        })
-        .collect();
+    let totals = day_totals(links);
 
     view! {
         <div class="trace-wrap">
@@ -1354,17 +1386,11 @@ fn OverviewChart(open: RwSignal<bool>, locale: Signal<Locale>) -> impl IntoView 
                                     .into_any();
                             }
                             return view! {
-                                // The same three figures the single-link dialog
-                                // opens with. This screen had none of them, which
-                                // left the more informative of the two answering
-                                // fewer questions than the narrower one.
-                                <div class="readout">
-                                    <span class="readout-figure">{payload.total.to_string()}</span>
-                                    <span class="readout-unit">{strings.stats_total}</span>
-                                    <span class="readout-aside">
-                                        {format!("{} {}", payload.unique, strings.stats_unique)}
-                                    </span>
-                                </div>
+                                // The same figures the single-link dialog opens
+                                // with. This screen had none of them, which left
+                                // the more informative of the two answering fewer
+                                // questions than the narrower one.
+                                {readout(payload.total, payload.unique, strings)}
                                 {overview_chart(&payload.links, strings.overview_title, hovered)}
                                 {day_axis(&payload.days, hovered)}
                                 {overview_legend(&payload.links, &payload.days, strings, hovered)}
@@ -1687,5 +1713,71 @@ pub fn AccountVault(account: Account, locale: Signal<Locale>) -> impl IntoView {
             <LinkStats active=active locale=locale />
             <OverviewChart open=overview_open locale=locale />
         </section>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OverviewLink, band_height, day_totals};
+    use crate::account::CHART_H;
+
+    fn link(code: &str, clicks: &[u64]) -> OverviewLink {
+        OverviewLink {
+            code: code.to_owned(),
+            total: clicks.iter().copied().sum(),
+            clicks: clicks.to_vec(),
+        }
+    }
+
+    /// The case the chart was rewritten for. Two links with one click on the
+    /// same day used to draw the identical line and one of them vanished;
+    /// stacked, that day is worth two and both segments are on screen.
+    #[test]
+    fn a_day_two_links_share_sums_instead_of_hiding_one() {
+        let links = [link("aaa", &[0, 1, 0]), link("bbb", &[0, 1, 0])];
+
+        assert_eq!(day_totals(&links), vec![0, 2, 0]);
+    }
+
+    #[test]
+    fn totals_follow_the_axis_even_when_a_link_is_silent() {
+        let links = [link("aaa", &[3, 0, 1]), link("bbb", &[0, 0, 0])];
+
+        assert_eq!(day_totals(&links), vec![3, 0, 1]);
+    }
+
+    #[test]
+    fn no_links_means_no_axis() {
+        assert!(day_totals(&[]).is_empty());
+    }
+
+    /// A short series must not read values off the end of the axis. The lints
+    /// deny indexing here, and this is why: the contract says every link is the
+    /// same length, and a chart is not the place to find out it was broken.
+    #[test]
+    fn a_short_series_counts_as_zero_rather_than_panicking() {
+        let links = [link("aaa", &[1, 1, 1]), link("bbb", &[5])];
+
+        assert_eq!(day_totals(&links), vec![6, 1, 1]);
+    }
+
+    #[test]
+    fn a_full_day_fills_the_plot_and_half_fills_half() {
+        assert_eq!(band_height(10, 10), CHART_H);
+        assert_eq!(band_height(5, 10), CHART_H / 2);
+    }
+
+    /// One click on a day someone else dominates rounds to zero by arithmetic.
+    /// Drawing nothing would deny a click the legend goes on to report, so the
+    /// band is floored at one unit.
+    #[test]
+    fn a_single_click_stays_visible_under_a_busy_day() {
+        assert_eq!(band_height(1, 10_000), 1);
+    }
+
+    #[test]
+    fn no_clicks_draws_nothing() {
+        assert_eq!(band_height(0, 10), 0);
+        assert_eq!(band_height(0, 0), 0);
     }
 }

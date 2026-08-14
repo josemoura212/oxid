@@ -438,6 +438,47 @@ async fn the_overview_answers_a_dense_day_axis(pool: PgPool) {
     assert!(stats.links.is_empty());
 }
 
+/// With a link owned, the overview takes its other path — the one that asks
+/// ClickHouse for totals and a breakdown rather than short-circuiting on an
+/// empty id list.
+///
+/// The sink is disabled here, so every number is zero. That is the point: the
+/// screen has to answer a whole payload before any click exists, because that is
+/// what a new account sees. It shipped without these fields at all, and an
+/// account with links and no clicks is exactly when their absence showed.
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_overview_answers_totals_for_an_account_with_links(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = sign_up(&app).await;
+
+    let shorten = app
+        .clone()
+        .oneshot(post_with_cookie(
+            "/v1/shorten",
+            &json!({ "url": "https://example.com/counted" }),
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(shorten.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(get_with_cookie("/v1/urls/overview?days=7", &cookie))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let stats: OverviewStats = body_json(response).await;
+
+    assert_eq!(stats.days.len(), 8, "seven days back, plus today");
+    assert_eq!(stats.total, 0, "the link exists, nobody has clicked it");
+    assert_eq!(stats.unique, 0);
+    assert_eq!(stats.breakdown.bots, 0);
+    assert!(stats.breakdown.countries.is_empty());
+    assert!(stats.breakdown.devices.is_empty());
+    assert!(stats.breakdown.referrers.is_empty());
+}
+
 /// `days` is clamped to the 30-day ClickHouse TTL, so a longer ask cannot produce
 /// an axis reaching past data that no longer exists.
 #[sqlx::test(migrations = "../../migrations")]

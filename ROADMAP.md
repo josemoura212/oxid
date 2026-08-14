@@ -1025,35 +1025,51 @@ bypass**. É mais forte do que o gatilho conseguia ser.
 código do fork ali entrega as credenciais a quem abriu o PR. `workflow_run` resolveria, mas
 acrescenta um workflow inteiro para um problema que o environment dissolve.
 
-## Pendência de UI — "Dados gerais" ficou pior que o dialog de um link só
+## "Dados gerais" ficou pior que o dialog de um link só ✅
 
-O dialog por link ganhou tratamento na Etapa 12 e o agregado não. O resultado é que a tela
-que deveria ser a mais informativa das duas é a que menos informa.
+O dialog por link ganhou tratamento na Etapa 12 e o agregado não. O resultado era que a tela
+que deveria ser a mais informativa das duas era a que menos informava.
 
-**O que está errado, olhando a tela:**
+**O que estava errado:**
 
-1. **Não tem métrica nenhuma.** O dialog de um link abre com o total, os únicos e as listas
-   de países, dispositivos e origens. O agregado tem só linhas. Não existe nem o número de
-   cliques do período, que é a pergunta mais óbvia de uma tela chamada "dados gerais".
-2. **As linhas se sobrepõem e uma some.** Dois links com 1 clique no mesmo dia desenham o
-   mesmo caminho, e o de baixo desaparece. Com 8 links no gráfico isso não é caso de borda,
-   é o normal — a maioria dos links tem tráfego parecido e baixo.
-3. **A legenda mostra número sem escala.** `zZobNpa 1` e `pCJuQKE 1` não dizem se 1 é muito
-   ou pouco, porque não há eixo Y nem referência.
-4. **O readout do dia não traz valor.** Mostra `14/08` e para. No dialog de um link a mesma
-   linha diz `13/08 · 0 cliques neste dia`.
-5. **Sobra vertical no topo.** O espaço acima da lista mostra `0` e `7` e nada entre eles.
+1. **Não tinha métrica nenhuma.** O dialog de um link abre com o total, os únicos e as listas
+   de países, dispositivos e origens. O agregado tinha só linhas — nem o número de cliques do
+   período, que é a pergunta mais óbvia de uma tela chamada "dados gerais".
+2. **As linhas se sobrepunham e uma sumia.** Dois links com 1 clique no mesmo dia desenhavam
+   o caminho idêntico, e o de baixo simplesmente não estava lá. Com 8 links isso não é caso
+   de borda, é a leitura normal — a maioria tem tráfego parecido e baixo.
+3. **A legenda mostrava número sem escala.**
+4. **O readout do dia não trazia valor.** Mostrava `14/08` e parava.
 
-**O que decidir antes de mexer:** linhas sobrepostas é problema de *codificação*, não de
-cor. Trocar a paleta não resolve — dois valores iguais continuam no mesmo pixel. As saídas
-reais são empilhar (área empilhada: mostra o total e a composição, perde a comparação entre
-links), separar (small multiples: um mini-gráfico por link, compara bem, ocupa mais espaço),
-ou mudar o que o eixo mede. Escolher **antes** de escrever CSS.
+**A decisão que destravou o resto: sobreposição é problema de _codificação_, não de cor.**
+Trocar a paleta não resolve — dois valores iguais ocupam o mesmo pixel seja qual for a cor.
+As saídas reais eram empilhar, separar em small multiples, ou mudar o que o eixo mede.
 
-- [ ] Decidir a codificação: empilhado × small multiples × outra coisa
-- [ ] Trazer as métricas do dialog de um link para o agregado (total, únicos, breakdowns)
-- [ ] Readout por dia com valor, como no dialog de um link
-- [ ] Resolver o vazio no topo
+**Escolhido: barras empilhadas por dia, segmentadas por link.** Empilhar remove a colisão
+por construção (um segmento fica *em cima* do anterior, não *sobre* ele) e responde a
+pergunta que dá nome à tela: a altura da barra é o total do dia somando todos os links, e os
+segmentos são o que compôs esse total. Barra e não linha por um segundo motivo — são
+contagens diárias, baldes discretos, e uma linha entre dois dias afirma um valor ao meio-dia
+que ninguém mediu. O gráfico de um link só sempre desenhou barras; agora os dois combinam.
+
+**O que isso custa:** comparar dois links entre si fica pior, porque só o segmento de baixo
+tem linha de base comum. É o trade certo aqui, já que comparar a forma de *um* link é o que
+o dialog individual já faz bem.
+
+- [x] Decidir a codificação — barras empilhadas
+- [x] Trazer as métricas do dialog de um link para o agregado (total, únicos, breakdowns)
+- [x] Readout por dia com o valor empilhado
+
+**Efeito colateral no servidor, e o bug que ele evita:** `summary` e `breakdown` passaram a
+receber `&[i64]` em vez de um id — o agregado precisa das mesmas perguntas sobre todos os
+códigos da conta. Não é só conveniência: `uniq(visitor_hash)` sobre o conjunto inteiro conta
+uma pessoa que abriu dois links **uma vez**, e somar os únicos por link contaria duas. É a
+mesma forma do bug que o `unique` já teve antes de o `X-Forwarded-For` ser corrigido, e agora
+tem teste (`a_visitor_on_two_links_is_one_person`).
+
+Os totais do topo são de propósito **não** truncados junto com o gráfico: o gráfico corta em
+`MAX_OVERVIEW_LINKS`, os números respondem "quanto tráfego eu tenho" e um número que
+silenciosamente descarta o nono link estaria errado, não abreviado.
 
 ---
 

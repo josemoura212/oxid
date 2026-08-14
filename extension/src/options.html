@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>oxid</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <div class="panel-head">
+        <div class="panel-heading">
+          <span class="panel-eyebrow">Extensão</span>
+          <h1 class="panel-title">oxid</h1>
+          <span class="panel-sub">Um clique encurta a aba e copia o link.</span>
+        </div>
+      </div>
+
+      <div class="panel-body">
+        <p class="note" id="intro">
+          Cole aqui um token da sua conta. Ele fica só neste navegador, e pode
+          ser revogado no site sem deslogar você de lugar nenhum.
+        </p>
+
+        <form class="stack" id="form">
+          <label class="field" for="token">
+            <span class="field-label">Token</span>
+            <input
+              class="field-input"
+              id="token"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="oxid_pat_…"
+              required
+            />
+          </label>
+
+          <label class="field" for="base">
+            <span class="field-label">Servidor</span>
+            <input
+              class="field-input"
+              id="base"
+              type="url"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <span class="field-hint">
+              Só mude isto se você roda a sua própria instância.
+            </span>
+          </label>
+
+          <button class="btn" type="submit" id="save">Salvar</button>
+          <p class="status" id="status" role="status"></p>
+        </form>
+      </div>
+
+      <div class="panel-foot">
+        <a class="btn--link" id="tokens-link" href="#" target="_blank" rel="noreferrer">
+          Criar um token no oxid
+        </a>
+        <button class="btn--link" type="button" id="forget">Esquecer este token</button>
+      </div>
+    </main>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

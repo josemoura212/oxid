@@ -98,3 +98,32 @@ impl Client {
         Err(MailError::Refused(format!("{status}: {detail}")))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Client;
+
+    /// The endpoint is assembled from the account id, so a wrong shape here is a
+    /// 404 from Cloudflare that reads like a permissions problem. Pinned rather
+    /// than trusted to a `format!` nobody reads again.
+    #[test]
+    fn the_endpoint_carries_the_account_id() {
+        let client = Client::new("token", "abc123", "oxid <no-reply@oxid.uk>");
+
+        assert_eq!(
+            client.endpoint(),
+            "https://api.cloudflare.com/client/v4/accounts/abc123/email/sending/send"
+        );
+    }
+
+    /// A derived `Debug` would put the API token into any line that formats this.
+    /// The hand-written one exists for that reason, and this is what keeps it.
+    #[test]
+    fn debug_never_prints_the_token() {
+        let client = Client::new("a-very-secret-token", "abc123", "oxid <no-reply@oxid.uk>");
+        let printed = format!("{client:?}");
+
+        assert!(!printed.contains("a-very-secret-token"), "{printed}");
+        assert!(printed.contains("abc123"));
+    }
+}

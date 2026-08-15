@@ -109,3 +109,62 @@ impl Mailer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Lang, Mailer, Message};
+    use crate::configuration::{CloudflareSettings, EmailBackend, EmailSettings, ResendSettings};
+
+    fn settings(backend: EmailBackend) -> EmailSettings {
+        EmailSettings {
+            backend,
+            require_confirmation: true,
+            site_url: "https://oxid.uk".to_owned(),
+            resend: ResendSettings {
+                api_key: "placeholder".to_owned().into(),
+                from: "oxid <no-reply@oxid.uk>".to_owned(),
+            },
+            cloudflare: CloudflareSettings {
+                api_token: "placeholder".to_owned().into(),
+                account_id: "abc123".to_owned(),
+                from: "oxid <no-reply@oxid.uk>".to_owned(),
+            },
+        }
+    }
+
+    /// The backend in the configuration decides which client is built. Getting
+    /// this wrong means a deploy that believes it switched provider and did not.
+    #[test]
+    fn the_configured_backend_is_the_one_built() {
+        assert_eq!(Mailer::new(&settings(EmailBackend::Off)).provider(), None);
+        assert_eq!(
+            Mailer::new(&settings(EmailBackend::Resend)).provider(),
+            Some("resend")
+        );
+        assert_eq!(
+            Mailer::new(&settings(EmailBackend::Cloudflare)).provider(),
+            Some("cloudflare")
+        );
+    }
+
+    /// `is_active` is what the test suite asserts on to prove it never mails
+    /// anyone, so it has to be true for every provider and false only for off.
+    #[test]
+    fn only_the_disabled_mailer_is_inactive() {
+        assert!(!Mailer::disabled().is_active());
+        assert!(Mailer::new(&settings(EmailBackend::Resend)).is_active());
+        assert!(Mailer::new(&settings(EmailBackend::Cloudflare)).is_active());
+    }
+
+    /// Disabled has to *say* the message, link included: it is the only way the
+    /// confirmation flow stays completable on a laptop with no provider account,
+    /// and the configuration validator leans on that being true.
+    #[tokio::test]
+    async fn the_disabled_mailer_accepts_everything_and_sends_nothing() {
+        let mailer = Mailer::disabled();
+        let message = Message::confirm("a@b.test", "https://oxid.uk", "tok", Lang::Pt);
+
+        assert!(mailer.send(&message).await.is_ok());
+        assert!(!mailer.is_active());
+    }
+}

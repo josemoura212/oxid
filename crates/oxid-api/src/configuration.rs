@@ -889,6 +889,33 @@ mod tests {
         );
     }
 
+    /// The message a person reads when the boot refuses. Worth pinning: it is
+    /// the entire diagnosis, delivered once, in a container that then exits.
+    #[test]
+    fn the_refusal_lists_every_problem_by_name() {
+        let settings = production_with(&[("email.site_url", ""), ("email.resend.from", "")]);
+        let printed = settings
+            .validate(super::Environment::Production)
+            .expect_err("must be refused")
+            .to_string();
+
+        assert!(printed.contains("email.site_url"), "{printed}");
+        assert!(printed.contains("email.resend.from"), "{printed}");
+        assert!(printed.contains("cannot be used"), "{printed}");
+    }
+
+    /// Each trade-off says something different and says something at all. An empty
+    /// or duplicated message is a warning that scrolls past unread.
+    #[test]
+    fn each_tradeoff_reads_differently() {
+        let enumeration = super::Tradeoff::EnumerationOpen.message();
+        let silent = super::Tradeoff::NobodyReceivesMail.message();
+
+        assert!(!enumeration.is_empty());
+        assert!(!silent.is_empty());
+        assert_ne!(enumeration, silent);
+    }
+
     /// A laptop is not a deployment. Warning about the normal way to work on one
     /// trains everybody to ignore the warning that matters.
     #[test]

@@ -3,6 +3,7 @@
   "name": "oxid",
   "version": "0.1.0",
   "description": "Um clique encurta a página aberta e copia o link curto.",
+  "homepage_url": "https://oxid.uk",
   "permissions": [
     "activeTab",
     "scripting",

@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node build.mjs",
     "check": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "package": "node build.mjs && node package.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",

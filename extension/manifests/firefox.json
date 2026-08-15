@@ -3,6 +3,7 @@
   "name": "oxid",
   "version": "0.1.0",
   "description": "Um clique encurta a página aberta e copia o link curto.",
+  "homepage_url": "https://oxid.uk",
   "permissions": [
     "activeTab",
     "scripting",
@@ -20,7 +21,11 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "oxid@oxid.uk",
-      "strict_min_version": "115.0"
+      "strict_min_version": "115.0",
+      "data_collection_permissions": {
+        "required": ["browsingActivity"],
+        "optional": []
+      }
     }
   },
 

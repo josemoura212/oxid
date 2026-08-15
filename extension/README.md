@@ -5,6 +5,7 @@ Um clique encurta a página aberta e põe o link curto na área de transferênci
 ```bash
 npm install
 npm run build     # gera dist/chrome, dist/firefox e dist/safari
+npm run package   # o mesmo, mais os .zip prontos para as lojas
 npm run check     # só checagem de tipos
 ```
 
@@ -102,8 +103,42 @@ publicam por API a partir de qualquer runner.
 No primeiro clique no ícone o popup abre já no formulário. Cole ali um token
 criado em **Conta → Tokens de API** no site.
 
+## Enviar para a addons.mozilla.org
+
+```bash
+npm run package
+npx addons-linter dist/oxid-firefox-0.1.0.zip
+```
+
+O `.zip` vai em `addons.mozilla.org/developers/` → "Enviar nova extensão".
+
+**O manifest tem que estar na raiz do arquivo.** `zip -r saida.zip pasta` guarda
+`pasta/manifest.json`, e a AMO recusa com um erro sobre manifest ausente que não
+diz nada sobre a causa real. Por isso o `package.mjs` compacta de dentro do
+diretório.
+
+### `data_collection_permissions` é obrigatório para extensão nova
+
+A Mozilla passou a exigir a declaração do que a extensão coleta. A nossa
+transmite **a URL da aba** para `oxid.uk` — é o produto —, o que na taxonomia
+deles é `browsingActivity`. Nada mais sai daqui: o token fica em `storage.local`
+e só viaja de volta para o servidor que o emitiu.
+
+O `addons-linter` avisa que `strict_min_version: 115.0` é anterior ao Firefox 142,
+que introduziu essa chave. É aviso, não erro, e a escolha é deliberada: subir o
+mínimo para 142 excluiria todo mundo entre 115 e 141 em troca de uma tela de
+consentimento que essas versões não têm. A declaração continua aparecendo na
+página da loja para todos.
+
+### Safari não entra aqui
+
+Ele precisa de app bundle, não de zip — ver a seção acima.
+
 ## Estado
 
-Funciona ponta a ponta e ainda não foi publicada em loja nenhuma. O CI de
-publicação automática é o próximo passo, e os dois primeiros itens dele são as
-credenciais de loja — que ainda não existem.
+Funciona ponta a ponta. O pacote do Firefox passa no `addons-linter` com zero
+erros e está pronto para envio manual.
+
+O CI de publicação automática é o próximo passo. A AMO tem API
+(`/api/v5/addons/`) com chave JWT gerada no Developer Hub, e o ID fixo que ela
+exige já está no manifest (`oxid@oxid.uk`) — o que falta é a credencial.

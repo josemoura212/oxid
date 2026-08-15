@@ -145,20 +145,34 @@ jobs:
       # Deploy by digest, not tag: `latest` is ambiguous and racy, the digest is
       # exactly the image this run built.
       #
+      # The manifest is applied, not just the image set. `set image` alone
+      # changes one field and leaves every other difference between git and the
+      # cluster unapplied — which is how a required config field shipped in an
+      # image whose Deployment had no env var to supply it. The new pod crashed
+      # on boot with `missing configuration field "email.resend.api_key"`, the
+      # rollout timed out, and the manifest declaring that variable had been
+      # merged half an hour earlier. `maxUnavailable: 0` is the only reason the
+      # site stayed up.
+      #
+      # The image is substituted into the manifest rather than set afterwards, so
+      # the apply never briefly points the Deployment at `:latest`.
+      #
       # API first: the front end talks to it, so a new bundle arriving before the
       # endpoint it expects would break for as long as the rollout takes.
       - name: Roll out API
         env:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.OWNER }}/oxid@${{ needs.build.outputs.api-digest }}
         run: |
-          kubectl -n oxid set image deployment/api api="$IMAGE_REF"
+          sed "s|ghcr.io/josemoura212/oxid:latest|${IMAGE_REF}|" infra/k8s/30-api.yaml \
+            | kubectl apply -f -
           kubectl -n oxid rollout status deployment/api --timeout=180s
 
       - name: Roll out front end
         env:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.OWNER }}/oxid-web@${{ needs.build.outputs.web-digest }}
         run: |
-          kubectl -n oxid set image deployment/web web="$IMAGE_REF"
+          sed "s|ghcr.io/josemoura212/oxid-web:latest|${IMAGE_REF}|" infra/k8s/60-web.yaml \
+            | kubectl apply -f -
           kubectl -n oxid rollout status deployment/web --timeout=120s
 
       - name: Smoke test

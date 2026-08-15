@@ -16,13 +16,33 @@ metadata:
   name: deployer
   namespace: oxid
 rules:
-  # Update the image and watch the rollout.
+  # Apply the Deployment and watch the rollout.
+  #
+  # `watch` is not decoration: without it `kubectl rollout status` still works by
+  # polling, but prints a "Failed to watch ... is forbidden" line beside every
+  # poll. That noise buried the one line that mattered when a rollout genuinely
+  # failed.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "patch", "update"]
+    verbs: ["get", "list", "patch", "update", "watch"]
   - apiGroups: ["apps"]
     resources: ["replicasets"]
     verbs: ["get", "list"]
+
+  # The deploy applies the whole manifest, not just the image, so it touches the
+  # ConfigMap and the Service that live in the same file.
+  #
+  # This is the permission that was missing when a required config field shipped
+  # in an image whose Deployment had no env var for it: the manifest declaring
+  # the variable was merged, and nothing ever applied it. A ConfigMap change that
+  # does not deploy is the same bug waiting to happen again.
+  #
+  # `create` is included because a first apply on a fresh namespace has nothing
+  # to patch. `delete` is deliberately absent — this credential rolls the app
+  # out, it does not tear it down.
+  - apiGroups: [""]
+    resources: ["configmaps", "services"]
+    verbs: ["get", "list", "create", "patch", "update"]
 
   # Migration Job: recreated on every deploy, and waited on.
   - apiGroups: ["batch"]

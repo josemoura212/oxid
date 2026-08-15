@@ -73,6 +73,15 @@ spec:
             - name: APP_ANALYTICS__CLICKHOUSE__PASSWORD
               valueFrom:
                 secretKeyRef: { name: oxid-clickhouse, key: password }
+            # Same arrangement for e-mail: the backend, the site URL and the From
+            # address are in `production.yaml`, and only the key is a secret.
+            #
+            # Created out of band, like `oxid-db` and `oxid-clickhouse`:
+            #   kubectl create secret generic oxid-email -n oxid \
+            #     --from-literal=resend-api-key=...
+            - name: APP_EMAIL__RESEND__API_KEY
+              valueFrom:
+                secretKeyRef: { name: oxid-email, key: resend-api-key }
 
           ports:
             - containerPort: 3000

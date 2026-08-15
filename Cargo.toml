@@ -37,6 +37,15 @@ clickhouse = { version = "0.15.1", default-features = false, features = [
     "inserter",
 ] }
 hex = "0.4.3"
+# One HTTPS call per message, to Resend. `default-features = false` because the
+# default drags in native-tls: rustls is already the whole tree's TLS stack (sqlx,
+# redis, clickhouse), and a second one would mean two root stores to trust and two
+# to keep current.
+reqwest = { version = "0.12.28", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "http2",
+] }
 # Digest for API tokens. Explicit rather than leaning on the copy redis and
 # clickhouse pull in: a transitive dependency is not a promise.
 sha2 = "0.10.9"

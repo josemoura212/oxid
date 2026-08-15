@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id AS user_id, password_hash\n        FROM users\n        WHERE email = $1::text::citext\n        ",
+  "query": "\n        SELECT id AS user_id, email_verified_at\n        FROM users\n        WHERE email = $1::text::citext\n        ",
   "describe": {
     "columns": [
       {
@@ -16,12 +16,12 @@
       },
       {
         "ordinal": 1,
-        "name": "password_hash",
-        "type_info": "Text",
+        "name": "email_verified_at",
+        "type_info": "Timestamptz",
         "origin": {
           "Table": {
             "table": "users",
-            "name": "password_hash"
+            "name": "email_verified_at"
           }
         }
       }
@@ -33,8 +33,8 @@
     },
     "nullable": [
       false,
-      false
+      true
     ]
   },
-  "hash": "a057739a801297ed10d142a56e47c437f34df7a7bf82fc3d0a54e8047d52ae6c"
+  "hash": "8907e42ee9097366eab5a878f221299b95e993c667120748555a6d344232c369"
 }

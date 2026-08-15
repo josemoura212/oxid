@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT email_verified_at FROM users WHERE email = $1::text::citext",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email_verified_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "email_verified_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "5b69fb83820435138597c8e2784e3ef41e11ed11831ef552a0d24b7e151edb59"
+}

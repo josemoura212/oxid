@@ -60,7 +60,16 @@ impl Client {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(TIMEOUT_SECONDS))
                 .build()
-                .unwrap_or_default(),
+                .unwrap_or_else(|err| {
+                    // The default client has **no timeout**, so falling back
+                    // silently would trade the bounded send this type promises
+                    // for one that can hang forever — inside a request handler.
+                    // Building a client only fails on a broken TLS backend, which
+                    // is a deployment problem worth a loud line rather than a
+                    // quiet downgrade.
+                    tracing::error!(%err, "falling back to an HTTP client with no timeout");
+                    reqwest::Client::default()
+                }),
             api_key: SecretString::from(api_key.to_owned()),
             from: from.to_owned(),
         }

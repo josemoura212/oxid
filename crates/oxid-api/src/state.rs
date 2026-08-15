@@ -4,11 +4,13 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use crate::{
     analytics::{self, ClickSink, ClickTx},
     auth::{
+        onetime::OneTimeTokens,
         password::{Decoy, Hasher},
         session::SessionStore,
     },
     cache::{self, Cache},
     configuration::Settings,
+    email::Mailer,
 };
 
 #[derive(Debug, Clone)]
@@ -16,6 +18,15 @@ pub struct AppState {
     pub db_pool: PgPool,
     pub cache: Cache,
     pub sessions: SessionStore,
+    /// Confirmation and password-reset links. Same Redis as the sessions, and
+    /// for the same reason: both have to be revocable the instant they are used.
+    pub tokens: OneTimeTokens,
+    /// Sends the two messages the account flow depends on. Disabled in
+    /// development and in tests, where it logs the link instead.
+    pub mailer: Mailer,
+    /// Where the links in those messages point — the front end, which is not
+    /// necessarily where the API lives.
+    pub site_url: String,
     /// The write side: the redirect emits a click here, and a background worker
     /// batches into ClickHouse. A no-op when analytics is disabled.
     pub clicks_tx: ClickTx,
@@ -56,7 +67,13 @@ impl AppState {
             .context("failed to connect to Redis")?;
 
         let cache = Cache::new(conn.clone(), settings.cache.negative_ttl_seconds);
-        let sessions = SessionStore::new(conn, settings.session.ttl_seconds);
+        let sessions = SessionStore::new(conn.clone(), settings.session.ttl_seconds);
+        let tokens = OneTimeTokens::new(conn);
+
+        // Built, not connected: Resend is one HTTPS call per message, so there is
+        // nothing to check at boot. An unusable key surfaces at send time, which
+        // is why `Mailer::new` refuses to quietly downgrade to disabled.
+        let mailer = Mailer::new(&settings.email);
 
         let decoy = Decoy::generate().context("failed to build the login decoy hash")?;
         let hasher = Hasher::new(
@@ -83,6 +100,9 @@ impl AppState {
             db_pool,
             cache,
             sessions,
+            tokens,
+            mailer,
+            site_url: settings.email.site_url.clone(),
             clicks_tx,
             clicks,
             base_url,

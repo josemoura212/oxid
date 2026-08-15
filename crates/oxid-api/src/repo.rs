@@ -139,6 +139,11 @@ pub async fn owns_code(pool: &PgPool, code_id: i64, owner_id: i64) -> Result<boo
 pub struct Credentials {
     pub user_id: i64,
     pub password_hash: String,
+    /// `None` until the address is confirmed. Login refuses on it, which is why
+    /// it travels with the hash rather than being a second query: fetching it
+    /// separately would mean an unverified account costs one more round trip
+    /// than a verified one, and that difference is measurable.
+    pub email_verified_at: Option<DateTime<Utc>>,
 }
 
 /// Written by hand rather than derived: a derived `Debug` would put the stored
@@ -170,7 +175,7 @@ pub async fn find_credentials(
     sqlx::query_as!(
         Credentials,
         r#"
-        SELECT id AS user_id, password_hash
+        SELECT id AS user_id, password_hash, email_verified_at
         FROM users
         WHERE email = $1::text::citext
         "#,
@@ -178,6 +183,95 @@ pub async fn find_credentials(
     )
     .fetch_optional(pool)
     .await
+}
+
+/// Who owns an address, and whether they have confirmed it.
+///
+/// For the flows that start from an e-mail and no password: "resend my
+/// confirmation" and "I forgot my password". Deliberately does **not** fetch the
+/// hash — neither caller verifies a password, and a hash that is never used is a
+/// hash that should never have left the database.
+#[derive(Debug)]
+pub struct Account {
+    pub user_id: i64,
+    pub email_verified_at: Option<DateTime<Utc>>,
+}
+
+pub async fn find_account(pool: &PgPool, email: &str) -> Result<Option<Account>, sqlx::Error> {
+    sqlx::query_as!(
+        Account,
+        r#"
+        SELECT id AS user_id, email_verified_at
+        FROM users
+        WHERE email = $1::text::citext
+        "#,
+        email
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Marks an address confirmed, and reports whether this call is what confirmed it.
+///
+/// `WHERE email_verified_at IS NULL` makes the write idempotent *and* truthful:
+/// a second confirmation returns `false` rather than moving the timestamp
+/// forward. When the column means "since when", overwriting it would erase the
+/// only fact it was carrying.
+pub async fn mark_email_verified(pool: &PgPool, user_id: i64) -> Result<bool, sqlx::Error> {
+    let updated = sqlx::query_scalar!(
+        r#"
+        UPDATE users
+        SET email_verified_at = now()
+        WHERE id = $1 AND email_verified_at IS NULL
+        RETURNING id
+        "#,
+        user_id
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(updated.is_some())
+}
+
+/// Deletes every API token an account holds, returning how many.
+///
+/// Used by the password reset. A personal access token is a bearer credential
+/// with no expiry that any valid session can mint, so a session revoke alone
+/// leaves an intruder's token working — see `reset_password`.
+pub async fn revoke_all_tokens(pool: &PgPool, user_id: i64) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query!("DELETE FROM api_tokens WHERE user_id = $1", user_id)
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected())
+}
+
+/// Replaces the password hash.
+///
+/// Confirms the address on the way through, and that is not a shortcut: reaching
+/// here means the person read a message sent to that address, which is the same
+/// proof the confirmation link asks for. Leaving it unverified would lock someone
+/// out of an account they just demonstrated control of.
+pub async fn update_password(
+    pool: &PgPool,
+    user_id: i64,
+    password_hash: &str,
+) -> Result<bool, sqlx::Error> {
+    let updated = sqlx::query_scalar!(
+        r#"
+        UPDATE users
+        SET password_hash = $2,
+            email_verified_at = COALESCE(email_verified_at, now())
+        WHERE id = $1
+        RETURNING id
+        "#,
+        user_id,
+        password_hash
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(updated.is_some())
 }
 
 /// Creates an account, or `None` when the e-mail is taken.

@@ -38,8 +38,19 @@ pub enum AppError {
     #[error("invalid email or password")]
     InvalidCredentials,
 
+    /// Kept for the import path, which still answers it. The signup no longer
+    /// can: telling a caller an address is taken is the enumeration oracle that
+    /// e-mail confirmation exists to close.
     #[error("email is already registered")]
     EmailTaken,
+
+    /// A one-time link that is expired, already spent, or never existed.
+    ///
+    /// One variant for all three on purpose. "Already used" and "never existed"
+    /// as separate answers would let someone holding a stolen link learn whether
+    /// it had been spent.
+    #[error("this link is no longer valid")]
+    InvalidToken,
 
     #[error("{0}")]
     InvalidInput(&'static str),
@@ -64,7 +75,8 @@ impl AppError {
             Self::InvalidUrl(_)
             | Self::InvalidBody(_)
             | Self::UrlTooLong
-            | Self::InvalidInput(_) => StatusCode::BAD_REQUEST,
+            | Self::InvalidInput(_)
+            | Self::InvalidToken => StatusCode::BAD_REQUEST,
             Self::NotFound => StatusCode::NOT_FOUND,
             // 401 for both: no session and bad credentials are the same answer
             // to the client, and 403 would imply the caller is known.
@@ -94,6 +106,7 @@ impl AppError {
             // cannot tell them apart by matching on `type` either.
             Self::InvalidCredentials => "https://oxid.uk/problems/invalid-credentials",
             Self::EmailTaken => "https://oxid.uk/problems/email-taken",
+            Self::InvalidToken => "https://oxid.uk/problems/invalid-token",
             Self::Overloaded => "https://oxid.uk/problems/overloaded",
             Self::InvalidInput(_) => "https://oxid.uk/problems/invalid-input",
             Self::Database(err) if is_check_violation(err) => {
@@ -116,6 +129,7 @@ impl AppError {
             // password" either.
             Self::InvalidCredentials => "Invalid credentials",
             Self::EmailTaken => "Email already registered",
+            Self::InvalidToken => "Link no longer valid",
             Self::Overloaded => "Temporarily overloaded",
             Self::InvalidInput(_) => "Invalid input",
             Self::Database(err) if is_check_violation(err) => "URL too long",
@@ -137,6 +151,9 @@ impl AppError {
             // Says nothing about which half failed, on purpose.
             Self::InvalidCredentials => "invalid email or password".to_owned(),
             Self::EmailTaken => "an account with this email already exists".to_owned(),
+            Self::InvalidToken => {
+                "this link has expired or was already used — ask for a new one".to_owned()
+            }
             Self::Overloaded => "try again in a moment".to_owned(),
             // Both spellings of the same failure quote `MAX_URL_LEN`, so the
             // number in the message cannot drift away from the number enforced.

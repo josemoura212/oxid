@@ -10,8 +10,9 @@
 use gloo_net::http::{Request, Response};
 use oxid_shared::{
     AccountResponse, ApiTokenSummary, ClickStats, CreateTokenRequest, CreatedToken,
-    CredentialsRequest, ImportRequest, ImportResponse, LinkPage, OverviewStats, ProblemDetails,
-    ShortenRequest, ShortenResponse,
+    CredentialsRequest, EmailRequest, ImportRequest, ImportResponse, LinkPage, OverviewStats,
+    ProblemDetails, ResetPasswordRequest, ShortenRequest, ShortenResponse, SignupResponse,
+    TokenRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -45,6 +46,34 @@ async fn post<B: Serialize, T: DeserializeOwned>(path: &str, body: &B) -> Result
     read(response).await
 }
 
+/// For the endpoints that answer 204. There is no body to deserialize, so the
+/// status is the whole answer — and a failure still carries a problem document
+/// worth showing.
+async fn post_empty<B: Serialize>(path: &str, body: &B) -> Result<(), String> {
+    let response = Request::post(path)
+        .json(body)
+        .map_err(|e| e.to_string())?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    status_only(response).await
+}
+
+async fn status_only(response: Response) -> Result<(), String> {
+    if response.ok() {
+        return Ok(());
+    }
+
+    let status = response.status();
+    let status_text = response.status_text();
+
+    Err(response.json::<ProblemDetails>().await.map_or_else(
+        |_| format!("{status} {status_text}"),
+        |problem| problem.message().to_owned(),
+    ))
+}
+
 async fn get<T: DeserializeOwned>(path: &str) -> Result<T, String> {
     let response = Request::get(path).send().await.map_err(|e| e.to_string())?;
 
@@ -55,8 +84,53 @@ pub async fn shorten(url: String) -> Result<ShortenResponse, String> {
     post("/v1/shorten", &ShortenRequest { url }).await
 }
 
-pub async fn signup(email: String, password: String) -> Result<AccountResponse, String> {
+/// Creates an account and asks the server to mail a confirmation link.
+///
+/// Does **not** sign anyone in, and answers the same thing whether or not the
+/// address was already registered — see `SignupResponse`. The front end must not
+/// try to be more informative than this: reporting "that address is taken" would
+/// hand back the enumeration oracle the server just gave up.
+pub async fn signup(email: String, password: String) -> Result<SignupResponse, String> {
     post("/v1/signup", &CredentialsRequest { email, password }).await
+}
+
+/// Spends a confirmation link.
+pub async fn verify_email(token: String) -> Result<(), String> {
+    post_empty("/v1/verify-email", &TokenRequest { token }).await
+}
+
+/// Asks for another confirmation link. Always succeeds, even for an address with
+/// no account.
+pub async fn resend_verification(email: String) -> Result<(), String> {
+    post_empty("/v1/resend-verification", &EmailRequest { email }).await
+}
+
+/// Starts a password reset. Always succeeds, for the same reason.
+pub async fn forgot_password(email: String) -> Result<(), String> {
+    post_empty("/v1/forgot-password", &EmailRequest { email }).await
+}
+
+/// Checks a reset link without spending it — what the reset screen calls on open.
+pub async fn check_reset(token: &str) -> Result<(), String> {
+    let response = Request::get(&format!(
+        "/v1/reset-password?token={}",
+        js_sys::encode_uri_component(token)
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+    status_only(response).await
+}
+
+/// Spends the link and sets the password. Every session ends, including any this
+/// browser held.
+pub async fn reset_password(token: String, password: String) -> Result<(), String> {
+    post_empty(
+        "/v1/reset-password",
+        &ResetPasswordRequest { token, password },
+    )
+    .await
 }
 
 pub async fn login(email: String, password: String) -> Result<AccountResponse, String> {

@@ -43,6 +43,12 @@ rate_limit:
   # do not exist. Two per second still allows a person who mistypes.
   login_per_second: 2
   login_burst: 5
+  # Tighter still, and for a different reason: these two put a message in
+  # somebody else's inbox. One every two seconds, with a burst of three, is more
+  # than a person needs and far less than a mail bomb requires. It also caps what
+  # each caller can spend of the Resend quota.
+  email_per_second: 1
+  email_burst: 3
   # Independent of who is calling, unlike the limits above. Argon2 blocks a
   # thread while it runs, so this is what keeps a login flood from taking the
   # redirect path down with it.

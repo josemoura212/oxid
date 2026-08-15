@@ -1,5 +1,6 @@
 //! Accounts, sessions and the extractors that read them.
 
+pub mod onetime;
 pub mod password;
 pub mod session;
 pub mod token;

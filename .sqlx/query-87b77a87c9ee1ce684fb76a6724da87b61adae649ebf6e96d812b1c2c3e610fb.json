@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET email_verified_at = now() WHERE email = $1::text::citext",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "87b77a87c9ee1ce684fb76a6724da87b61adae649ebf6e96d812b1c2c3e610fb"
+}

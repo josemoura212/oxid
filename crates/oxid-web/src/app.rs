@@ -5,6 +5,7 @@ use crate::{
     account::{Account, AccountButton, AccountDialog, AccountVault},
     api,
     i18n::Locale,
+    inbox::{Arrival, ResetScreen, VerifyScreen, arrival},
     storage::{self, SavedLink},
 };
 
@@ -23,6 +24,12 @@ pub fn App() -> impl IntoView {
 
     let account = Account::new();
     let dialog_open = RwSignal::new(false);
+
+    // Read once, at mount. Both of these arrive as a query on the site root
+    // rather than a path of their own — there is no router here, and nginx
+    // refuses to serve `index.html` for unknown paths on purpose. See
+    // `crate::inbox`.
+    let arrived = arrival();
 
     // The served HTML is always `lang="en"` — it is a static file. Screen
     // readers pick pronunciation from this attribute, so it has to be corrected
@@ -100,6 +107,16 @@ pub fn App() -> impl IntoView {
             open=dialog_open
             saved=links
         />
+
+        {match arrived {
+            Some(Arrival::Verify(token)) => {
+                view! { <VerifyScreen token=token locale=locale.into() /> }.into_any()
+            }
+            Some(Arrival::Reset(token)) => {
+                view! { <ResetScreen token=token locale=locale.into() /> }.into_any()
+            }
+            None => ().into_any(),
+        }}
     }
 }
 

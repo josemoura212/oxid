@@ -53,19 +53,67 @@ pub fn router(state: Arc<AppState>, rate_limit: RateLimitSettings) -> anyhow::Re
 
     let expensive_limit = GovernorLayer::new(Arc::new(expensive_limit));
 
+    // Tighter than either of the above, because these are the only routes whose
+    // cost lands on someone who did not make the request: each call puts a message
+    // in a stranger's inbox and spends provider quota. Unlimited, "resend" and
+    // "forgot my password" are a mail-bombing tool aimed at any address.
+    let email_limit = GovernorConfigBuilder::default()
+        .per_second(rate_limit.email_per_second)
+        .burst_size(rate_limit.email_burst)
+        .key_extractor(SmartIpKeyExtractor)
+        .use_headers()
+        .finish()
+        .context("invalid rate limit configuration for the email routes")?;
+
+    let email_limit = GovernorLayer::new(Arc::new(email_limit));
+
     Ok(Router::new()
         .route("/health", get(health::health))
         .route(
             "/v1/shorten",
             post(shorten::shorten).layer(GovernorLayer::new(Arc::new(shorten_limit))),
         )
+        // The e-mail limit, not the login one, and it is the tighter of the two.
+        // Signup spends an Argon2 like login, but it also puts a message in an
+        // inbox the caller chose — a confirmation link for a free address, a
+        // warning for a taken one. Under the login limit it allowed twice what
+        // the dedicated e-mail limit does, which made the cheapest mail-bombing
+        // route the one route not counted as sending mail.
         .route(
             "/v1/signup",
-            post(accounts::signup).layer(expensive_limit.clone()),
+            post(accounts::signup).layer(email_limit.clone()),
         )
         .route(
             "/v1/login",
             post(accounts::login).layer(expensive_limit.clone()),
+        )
+        // Spending a confirmation link. Under the expensive limit rather than the
+        // e-mail one: it sends nothing, but it is a bearer credential being
+        // guessed at if anyone tries.
+        .route(
+            "/v1/verify-email",
+            post(accounts::verify_email).layer(expensive_limit.clone()),
+        )
+        // The two that put a message in somebody else's inbox.
+        .route(
+            "/v1/resend-verification",
+            post(accounts::resend_verification).layer(email_limit.clone()),
+        )
+        .route(
+            "/v1/forgot-password",
+            post(accounts::forgot_password).layer(email_limit),
+        )
+        // Checked on open, spent on save — two verbs on one path, which is what
+        // keeps a reset link alive between the click and the submit.
+        // Limited like login, and it has to be: the POST spends an Argon2, and
+        // `hash_concurrency` is 1. Unlimited, one valid reset link submitted in
+        // parallel saturated the only hashing slot in the process and answered
+        // 503 to every login and signup in flight.
+        .route(
+            "/v1/reset-password",
+            get(accounts::check_reset)
+                .post(accounts::reset_password)
+                .layer(expensive_limit.clone()),
         )
         .route("/v1/logout", post(accounts::logout))
         // "Sign out everywhere" — revokes every session the caller has, for after

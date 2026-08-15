@@ -17,11 +17,13 @@ use http_body_util::BodyExt;
 use oxid::{
     analytics::{ClickSink, ClickTx},
     auth::{
+        onetime::OneTimeTokens,
         password::{Decoy, Hasher},
         session::SessionStore,
     },
     cache::Cache,
     configuration::RateLimitSettings,
+    email::Mailer,
     routes,
     state::AppState,
 };
@@ -50,6 +52,9 @@ fn app(pool: PgPool) -> Router {
         // No Redis here, so nobody can be signed in — which is what these tests
         // want: they cover the anonymous surface.
         sessions: SessionStore::disabled(),
+        tokens: OneTimeTokens::disabled(),
+        mailer: Mailer::disabled(),
+        site_url: BASE_URL.to_owned(),
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
         clicks_tx: ClickTx::disabled(),
@@ -71,6 +76,8 @@ const fn permissive_rate_limit() -> RateLimitSettings {
         shorten_burst: 10_000,
         login_per_second: 1_000,
         login_burst: 10_000,
+        email_per_second: 1_000,
+        email_burst: 10_000,
         hash_concurrency: HASH_CONCURRENCY,
         hash_wait_ms: HASH_WAIT_MS,
     }
@@ -307,6 +314,9 @@ async fn shorten_is_rate_limited_and_the_redirect_is_not(pool: PgPool) {
         // No Redis here, so nobody can be signed in — which is what these tests
         // want: they cover the anonymous surface.
         sessions: SessionStore::disabled(),
+        tokens: OneTimeTokens::disabled(),
+        mailer: Mailer::disabled(),
+        site_url: BASE_URL.to_owned(),
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
         clicks_tx: ClickTx::disabled(),
@@ -328,6 +338,8 @@ async fn shorten_is_rate_limited_and_the_redirect_is_not(pool: PgPool) {
             // wrong reason.
             login_per_second: 1_000,
             login_burst: 10_000,
+            email_per_second: 1_000,
+            email_burst: 10_000,
             hash_concurrency: HASH_CONCURRENCY,
             hash_wait_ms: HASH_WAIT_MS,
         },

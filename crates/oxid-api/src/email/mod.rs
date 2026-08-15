@@ -15,6 +15,7 @@
 //! another link", not "signup is down". Every function here returns `Result` so
 //! the caller can log it, and every caller logs rather than propagates.
 
+mod cloudflare;
 mod message;
 mod resend;
 mod template;
@@ -34,6 +35,9 @@ pub enum Mailer {
     /// the message silently would leave the flow untestable by hand.
     Disabled,
     Resend(resend::Client),
+    /// Cloudflare Email Service, over its REST endpoint. Same four fields, same
+    /// one call per message — no Worker involved.
+    Cloudflare(cloudflare::Client),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -59,6 +63,11 @@ impl Mailer {
                 settings.resend.api_key(),
                 &settings.resend.from,
             )),
+            EmailBackend::Cloudflare => Self::Cloudflare(cloudflare::Client::new(
+                settings.cloudflare.api_token(),
+                &settings.cloudflare.account_id,
+                &settings.cloudflare.from,
+            )),
         }
     }
 
@@ -69,7 +78,16 @@ impl Mailer {
     /// Whether messages actually leave the process. Tests assert on this so a
     /// misconfigured suite cannot quietly become a suite that mails people.
     pub const fn is_active(&self) -> bool {
-        matches!(self, Self::Resend(_))
+        matches!(self, Self::Resend(_) | Self::Cloudflare(_))
+    }
+
+    /// Which provider is wired, for a log line at boot. `None` when nothing is.
+    pub const fn provider(&self) -> Option<&'static str> {
+        match self {
+            Self::Disabled => None,
+            Self::Resend(_) => Some("resend"),
+            Self::Cloudflare(_) => Some("cloudflare"),
+        }
     }
 
     pub async fn send(&self, message: &Message) -> Result<(), MailError> {
@@ -87,6 +105,7 @@ impl Mailer {
                 Ok(())
             }
             Self::Resend(client) => client.send(message).await,
+            Self::Cloudflare(client) => client.send(message).await,
         }
     }
 }

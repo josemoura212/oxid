@@ -30,12 +30,29 @@ pub struct Settings {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EmailSettings {
     pub backend: EmailBackend,
+
+    /// Whether an unconfirmed address may sign in.
+    ///
+    /// **Turning this off reopens account enumeration, and there is no way to
+    /// have both.** With confirmation required, a signup writes nothing a login
+    /// can probe: a fresh account cannot sign in, so the answer is the same for a
+    /// free address and a taken one. Without it, the account created by a signup
+    /// works immediately — so `signup` then `login` with a password of your
+    /// choosing succeeds on a free address and fails on a registered one, which
+    /// is two requests per address and no timing involved.
+    ///
+    /// It exists because development and tests need a way through without a mail
+    /// provider. Production keeps it on, and [`Settings::warn_about_tradeoffs`]
+    /// says so out loud at boot when it does not.
+    pub require_confirmation: bool,
     /// Where the links in the messages point. Separate from
     /// [`ApplicationSettings::base_url`] because the API and the front end can
     /// live on different hosts, and it is the front end a person clicks into.
     pub site_url: String,
     #[serde(default)]
     pub resend: ResendSettings,
+    #[serde(default)]
+    pub cloudflare: CloudflareSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -43,6 +60,44 @@ pub struct EmailSettings {
 pub enum EmailBackend {
     Off,
     Resend,
+    /// Cloudflare Email Service, over its REST API.
+    ///
+    /// No Worker involved: the binding is one of three ways in, and the HTTP one
+    /// is callable from anywhere — the same shape the Resend client already uses.
+    ///
+    /// Its quota is **adaptive** rather than published: an account "starts with a
+    /// conservative daily quota and scales up based on sending behaviour". That
+    /// is the reason both backends exist rather than one replacing the other —
+    /// hitting an unpublished ceiling on a confirmation link is somebody unable
+    /// to sign in, and switching back has to be an environment variable rather
+    /// than a deploy.
+    Cloudflare,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CloudflareSettings {
+    pub api_token: SecretString,
+    pub account_id: String,
+    /// The `From` address. Has to be on a domain verified in Cloudflare, the same
+    /// requirement Resend makes.
+    pub from: String,
+}
+
+/// By hand, for the same reason as [`ResendSettings::default`].
+impl Default for CloudflareSettings {
+    fn default() -> Self {
+        Self {
+            api_token: SecretString::from(String::new()),
+            account_id: String::new(),
+            from: String::new(),
+        }
+    }
+}
+
+impl CloudflareSettings {
+    pub fn api_token(&self) -> &str {
+        self.api_token.expose_secret()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -307,7 +362,7 @@ impl Environment {
         }
     }
 
-    fn from_env() -> anyhow::Result<Self> {
+    pub fn from_env() -> anyhow::Result<Self> {
         let raw = env::var("APP_ENVIRONMENT").unwrap_or_else(|_| Self::Local.as_str().to_owned());
 
         match raw.to_lowercase().as_str() {
@@ -335,6 +390,35 @@ fn config_dir() -> anyhow::Result<PathBuf> {
                 cwd.display()
             )
         })
+}
+
+impl Settings {
+    /// Says out loud, at boot, what a configuration is giving up.
+    ///
+    /// Not a refusal: both of these are legitimate somewhere. What they cannot be
+    /// is silent — a production deploy that stopped requiring confirmation, or one
+    /// that sends nothing, should say so in the first ten lines of its log rather
+    /// than be discovered from a support message.
+    pub fn warn_about_tradeoffs(&self, environment: Environment) {
+        if environment != Environment::Production {
+            return;
+        }
+
+        if !self.email.require_confirmation {
+            tracing::warn!(
+                "email confirmation is OFF in production: an account works the moment it is \
+                 created, so signup followed by login tells a free address from a registered \
+                 one. Account enumeration is open while this stays off."
+            );
+        }
+
+        if self.email.backend == EmailBackend::Off {
+            tracing::warn!(
+                "the mailer is OFF in production: confirmation and password-reset links are \
+                 written to this log instead of being sent, and nobody receives them."
+            );
+        }
+    }
 }
 
 /// The layering, without reading the environment for which layer to pick.
@@ -377,7 +461,7 @@ mod tests {
     /// `ConfigMap` plus the three Secrets — kept in one place so adding a secret
     /// means updating this list, and the production test keeps meaning "this is
     /// what the Deployment actually provides".
-    const CLUSTER_ENV: [(&str, &str); 6] = [
+    const CLUSTER_ENV: [(&str, &str); 7] = [
         ("database.password", "x"),
         ("database.username", "oxid"),
         ("database.database_name", "oxid"),
@@ -387,6 +471,10 @@ mod tests {
         // their scanner matches, and a placeholder that trips it costs a
         // review cycle to explain every time.
         ("email.resend.api_key", "placeholder"),
+        // Both halves. A provider block is all-or-nothing: naming one field
+        // creates the block and makes the rest required, which is exactly why no
+        // `.yaml` names either provider any more.
+        ("email.resend.from", "oxid <no-reply@oxid.uk>"),
     ];
 
     fn assemble(environment: &str, overrides: &[(&str, &str)]) -> anyhow::Result<Settings> {
@@ -443,9 +531,13 @@ mod tests {
         );
     }
 
-    /// What the migration Job does: same files, backend off, placeholder key.
+    /// The other provider selects and deserializes from the environment alone.
+    ///
+    /// Cloudflare's block has no entry in any `.yaml` — it exists only if the
+    /// deployment injects it, which is what makes switching providers an
+    /// environment change rather than a deploy.
     #[test]
-    fn the_migration_jobs_overrides_are_enough_to_boot() {
+    fn cloudflare_can_be_selected_entirely_from_the_environment() {
         let settings = assemble(
             "production",
             &[
@@ -454,12 +546,56 @@ mod tests {
                 ("database.database_name", "oxid"),
                 ("analytics.backend", "off"),
                 ("analytics.clickhouse.password", ""),
-                ("email.backend", "off"),
-                ("email.resend.api_key", ""),
+                ("email.backend", "cloudflare"),
+                ("email.cloudflare.api_token", "placeholder"),
+                ("email.cloudflare.account_id", "abc123"),
+                ("email.cloudflare.from", "oxid <no-reply@oxid.uk>"),
             ],
         )
-        .expect("the migrator must boot with no credentials it cannot use");
+        .expect("cloudflare must select from the environment alone");
+
+        assert_eq!(settings.email.backend, super::EmailBackend::Cloudflare);
+        assert_eq!(settings.email.cloudflare.account_id, "abc123");
+    }
+
+    /// Confirmation is required unless something turns it off, and nothing in the
+    /// files does. A default that silently let unconfirmed accounts sign in would
+    /// be the enumeration hole arriving by omission.
+    #[test]
+    fn confirmation_is_required_by_default_everywhere() {
+        for environment in ["local", "production"] {
+            let overrides: Vec<(&str, &str)> = CLUSTER_ENV.into_iter().collect();
+            let settings = assemble(environment, &overrides).expect("must load");
+
+            assert!(
+                settings.email.require_confirmation,
+                "{environment} does not require confirmation"
+            );
+        }
+    }
+
+    /// What the migration Job does, built the way the Job is actually built.
+    ///
+    /// **On top of `CLUSTER_ENV`, not instead of it.** The Job pulls the same
+    /// `oxid-config` map the API does, through `envFrom`, and then overrides
+    /// a few keys with its own `env`. Testing the overrides alone would have
+    /// missed exactly the failure this test exists for: that map now carries
+    /// `APP_EMAIL__RESEND__FROM`, which creates a partial provider block and makes
+    /// the credential required for a process that sends nothing.
+    #[test]
+    fn the_migration_jobs_overrides_are_enough_to_boot() {
+        let mut overrides: Vec<(&str, &str)> = CLUSTER_ENV.into_iter().collect();
+        overrides.extend([
+            ("analytics.backend", "off"),
+            ("analytics.clickhouse.password", ""),
+            ("email.backend", "off"),
+            ("email.resend.api_key", ""),
+        ]);
+
+        let settings = assemble("production", &overrides)
+            .expect("the migrator must boot with no credentials it cannot use");
 
         assert_eq!(settings.email.backend, super::EmailBackend::Off);
+        assert_eq!(settings.analytics.backend, super::AnalyticsBackend::Off);
     }
 }

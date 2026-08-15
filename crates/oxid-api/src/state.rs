@@ -27,6 +27,10 @@ pub struct AppState {
     /// Where the links in those messages point — the front end, which is not
     /// necessarily where the API lives.
     pub site_url: String,
+    /// Whether an unconfirmed address may sign in. See
+    /// [`crate::configuration::EmailSettings::require_confirmation`] for what
+    /// turning it off costs.
+    pub require_confirmation: bool,
     /// The write side: the redirect emits a click here, and a background worker
     /// batches into ClickHouse. A no-op when analytics is disabled.
     pub clicks_tx: ClickTx,
@@ -74,6 +78,11 @@ impl AppState {
         // nothing to check at boot. An unusable key surfaces at send time, which
         // is why `Mailer::new` refuses to quietly downgrade to disabled.
         let mailer = Mailer::new(&settings.email);
+        tracing::info!(
+            provider = mailer.provider().unwrap_or("none"),
+            require_confirmation = settings.email.require_confirmation,
+            "email configured"
+        );
 
         let decoy = Decoy::generate().context("failed to build the login decoy hash")?;
         let hasher = Hasher::new(
@@ -103,6 +112,7 @@ impl AppState {
             tokens,
             mailer,
             site_url: settings.email.site_url.clone(),
+            require_confirmation: settings.email.require_confirmation,
             clicks_tx,
             clicks,
             base_url,

@@ -190,6 +190,18 @@ pub(super) async fn signup(
     // second would be a race that two concurrent signups win together.
     match repo::create_user(&state.db_pool, email, &hash).await? {
         Some(user_id) => {
+            // With confirmation off there is nothing to confirm: the account is
+            // marked verified at creation and no link is sent. That is the whole
+            // of the flag's effect on this handler, and it is also where the
+            // enumeration it reopens begins — the account works immediately, so a
+            // login right after tells a free address from a taken one.
+            if !state.require_confirmation {
+                repo::mark_email_verified(&state.db_pool, user_id).await?;
+                return Ok(Json(SignupResponse {
+                    email: email.to_owned(),
+                }));
+            }
+
             let token = issue(&state, Purpose::Verify, user_id).await?;
 
             deliver(
@@ -262,7 +274,7 @@ pub(super) async fn login(
     // That is paid for on the sign-in screen, which offers to send another
     // confirmation link beside "forgot your password" — unconditionally, so the
     // offer itself says nothing about the address either.
-    if credentials.email_verified_at.is_none() {
+    if state.require_confirmation && credentials.email_verified_at.is_none() {
         return Err(AppError::InvalidCredentials);
     }
 

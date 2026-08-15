@@ -60,6 +60,10 @@ spec:
             # for a process that sends nothing. Off, and a placeholder.
             - name: APP_EMAIL__BACKEND
               value: "off"
+            # Still needed even with the backend off: the ConfigMap above sets
+            # `APP_EMAIL__RESEND__FROM`, which creates a partial provider block —
+            # and a provider block is all-or-nothing, so the credential becomes a
+            # required field for a process that sends nothing.
             - name: APP_EMAIL__RESEND__API_KEY
               value: ""
 

@@ -19,6 +19,12 @@ async fn run() -> anyhow::Result<()> {
     telemetry::init();
 
     let settings = configuration::load()?;
+
+    // After telemetry, before anything else: a deploy that gave something up
+    // should say so in its first lines rather than be discovered from a support
+    // message.
+    settings.warn_about_tradeoffs(configuration::Environment::from_env()?);
+
     let addr = settings.application.addr();
 
     // Before anything can record: a measurement taken with no recorder

@@ -24,6 +24,10 @@ data:
   APP_ANALYTICS__CLICKHOUSE__PORT: "8123"
   APP_ANALYTICS__CLICKHOUSE__USER: "oxid"
   APP_ANALYTICS__CLICKHOUSE__DATABASE: "oxid"
+  # E-mail. The provider is chosen here, so switching between Resend and
+  # Cloudflare is an edit to this ConfigMap rather than a code change. Only the
+  # credential is a Secret; the From address is not one.
+  APP_EMAIL__RESEND__FROM: "oxid <nao-responda@oxid.uk>"
   RUST_LOG: "oxid=info,tower_http=info,warn"
 
 ---

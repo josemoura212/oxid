@@ -67,3 +67,19 @@ analytics:
     port: 8123
     user: oxid
     database: oxid
+
+email:
+  # Quoted for the same reason as the analytics backend: unquoted, YAML reads
+  # `off` as the boolean false instead of the string the enum expects.
+  #
+  # Off by default so a plain boot and every test run send nothing. A signup test
+  # that mails for real spends provider quota to deliver a link nobody reads, and
+  # a laptop with no API key would fail to start.
+  backend: "off"
+  # Where the links point. Overridden per environment.
+  site_url: http://127.0.0.1:8080
+  # No `resend:` block here on purpose. Naming it — even with empty values —
+  # would make `api_key` a required field for every environment, including the
+  # ones that send nothing, because `#[serde(default)]` on the field only applies
+  # when the whole block is absent. This is the same shape as the missing
+  # ClickHouse password that stopped the migration Job from booting.

@@ -54,6 +54,15 @@ spec:
             - name: APP_ANALYTICS__CLICKHOUSE__PASSWORD
               value: ""
 
+            # The third instance of the same problem, and the reason the pending
+            # item above is worth doing rather than patching again: `production.yaml`
+            # selects the Resend backend, so `email.resend.api_key` becomes required
+            # for a process that sends nothing. Off, and a placeholder.
+            - name: APP_EMAIL__BACKEND
+              value: "off"
+            - name: APP_EMAIL__RESEND__API_KEY
+              value: ""
+
           resources:
             requests: { cpu: 50m, memory: 32Mi }
             limits: { memory: 128Mi }

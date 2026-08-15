@@ -8,3 +8,11 @@ application:
 
 database:
   require_ssl: true
+
+email:
+  # `resend.api_key` is deliberately absent, like the database password — it
+  # comes from APP_EMAIL__RESEND__API_KEY.
+  backend: resend
+  site_url: https://oxid.uk
+  resend:
+    from: oxid <nao-responda@oxid.uk>

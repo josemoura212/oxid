@@ -46,3 +46,48 @@ async function main() {
 }
 
 await main();
+
+/**
+ * The source archive AMO asks for when a submission ships generated code.
+ *
+ * Ours does: `tsc` reads TypeScript and writes the JavaScript that goes in the
+ * package, which is exactly the last item on their list. Answering "no" to that
+ * question and uploading transpiled output is how a submission comes back.
+ *
+ * Everything needed to reproduce the upload and nothing else — `node_modules` is
+ * excluded because `npm ci` rebuilds it from the lockfile, which *is* included so
+ * the reviewer resolves the same versions we did.
+ */
+async function source() {
+  const manifest = JSON.parse(
+    await readFile(path.join(root, "manifests", "firefox.json"), "utf8"),
+  );
+
+  const archive = path.join(dist, `oxid-source-${manifest.version}.zip`);
+  await rm(archive, { force: true });
+
+  await run(
+    "zip",
+    [
+      "-r",
+      "-X",
+      "-q",
+      archive,
+      "src",
+      "manifests",
+      "icons",
+      "build.mjs",
+      "package.mjs",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "BUILD.md",
+      "README.md",
+    ],
+    { cwd: root },
+  );
+
+  console.log(path.relative(root, archive));
+}
+
+await source();

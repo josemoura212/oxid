@@ -905,6 +905,29 @@ testes guardam os dois lados: `without_confirmation_an_account_works_immediately
 e `without_confirmation_signup_and_login_do_enumerate`, o segundo afirmando o
 custo em vez de só documentá-lo.
 
+### O validador de configuração
+
+`Settings::validate` roda antes de qualquer conexão e **recusa o boot**. Serde só
+prova que os campos existem; isto prova que significam alguma coisa.
+
+O que ele pega, e o que cada um custaria sem ele:
+
+| Regra | Onde a falha apareceria sem isso |
+|---|---|
+| Provedor selecionado com credencial vazia | na hora de enviar, em tarefa de fundo, para quem espera o e-mail |
+| Confirmação exigida e nenhum provedor | contas criadas que ninguém consegue confirmar |
+| `site_url` sem esquema | link inclicável, na caixa de entrada de outra pessoa |
+| `max_connections: 0` | toda requisição esperando um slot que nunca libera |
+
+**Reporta todos de uma vez**, não o primeiro. Corrigir variável de ambiente um
+boot por vez é miserável — cinco erros devem custar um boot, não cinco.
+
+A regra de "confirmação exige provedor" **só vale em produção**, e a exceção não é
+preguiça: o mailer desabilitado registra a mensagem inteira no log, link incluído,
+justamente para o fluxo continuar percorrível à mão sem conta em provedor nenhum.
+No terminal de quem desenvolve isso é um caminho que funciona; num cluster,
+ninguém lê log de pod para ativar a própria conta.
+
 **E-mail é canal que você não controla.** Entrega não é garantida — spam, greylisting,
 domínio novo sem reputação. Duas consequências: o fluxo **precisa** de reenviar, e o
 domínio precisa de SPF/DKIM/DMARC configurados no Resend antes de qualquer envio valer.

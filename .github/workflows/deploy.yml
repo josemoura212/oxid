@@ -122,6 +122,16 @@ jobs:
           printf '%s' "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
           chmod 600 "$HOME/.kube/config"
 
+      # **Before the migrations, and that ordering is the point.**
+      #
+      # The Job reads this map through `envFrom`, and the pipeline used to apply
+      # it with the Deployment — after the Job had already run. So the Job booted
+      # with the new image and the previous configuration, and the first release
+      # to add a key the image required could not start it. The deploy failed on
+      # a configuration that was correct in git and not yet in the cluster.
+      - name: Apply shared configuration
+        run: kubectl apply -f infra/k8s/05-config.yaml
+
       # Migrations run before the rollout, as a Job. Doing it inside the pods
       # would have both replicas racing on the same schema.
       #

@@ -916,6 +916,98 @@ mod tests {
         assert_ne!(enumeration, silent);
     }
 
+    /// The cluster's own config map, read from the manifest rather than modelled.
+    ///
+    /// **A hand-written `CLUSTER_ENV` is a guess about the cluster, and this is
+    /// the file.** The two drifted apart once already: a release moved a required
+    /// field out of `production.yaml` and into the map, the test modelled the map
+    /// as it would be *after* the deploy, and the migration Job — which runs
+    /// before the map is applied — could not boot.
+    fn config_map() -> Vec<(String, String)> {
+        let path = config_dir()
+            .expect("configuration/ must exist")
+            .parent()
+            .expect("the repository root")
+            .join("infra/k8s/05-config.yaml");
+
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(!raw.is_empty(), "could not read {}", path.display());
+
+        raw.lines()
+            .filter_map(|line| line.trim().strip_prefix("APP_"))
+            .filter_map(|entry| entry.split_once(':'))
+            .map(|(key, value)| {
+                // `APP_DATABASE__HOST` is `database.host`, which is the shape the
+                // config crate builds from the environment.
+                let path = key.trim().to_lowercase().replace("__", ".");
+                let value = value.trim().trim_matches('"').to_owned();
+                (path, value)
+            })
+            .collect()
+    }
+
+    /// What the cluster actually gives the API, plus its Secrets, has to validate.
+    #[test]
+    fn the_real_config_map_plus_secrets_is_valid() {
+        let map = config_map();
+        assert!(
+            map.iter().any(|(key, _)| key == "environment"),
+            "the manifest was not parsed: {map:?}"
+        );
+
+        let mut overrides: Vec<(&str, &str)> = map
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+
+        // Only the Secrets, which never appear in a manifest.
+        overrides.extend([
+            ("database.password", "x"),
+            ("database.username", "oxid"),
+            ("database.database_name", "oxid"),
+            ("analytics.clickhouse.password", "x"),
+            ("email.resend.api_key", "placeholder"),
+        ]);
+
+        let settings = assemble("production", &overrides).expect("the cluster config must load");
+
+        settings
+            .validate(super::Environment::Production)
+            .expect("the cluster config must be valid");
+
+        assert!(
+            settings
+                .tradeoffs(super::Environment::Production)
+                .is_empty(),
+            "production is trading something away without meaning to"
+        );
+    }
+
+    /// The migration Job runs with the same map and its own overrides, and it is
+    /// the process that failed. It reads only `database`, so it must boot without
+    /// any credential it cannot use.
+    #[test]
+    fn the_migration_job_boots_with_the_real_config_map() {
+        let map = config_map();
+        let mut overrides: Vec<(&str, &str)> = map
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+
+        overrides.extend([
+            ("database.password", "x"),
+            ("database.username", "oxid"),
+            ("database.database_name", "oxid"),
+            // Exactly what 50-migrate-job.yaml overrides.
+            ("analytics.backend", "off"),
+            ("analytics.clickhouse.password", ""),
+            ("email.backend", "off"),
+            ("email.resend.api_key", ""),
+        ]);
+
+        assemble("production", &overrides).expect("the migration Job must boot");
+    }
+
     /// A laptop is not a deployment. Warning about the normal way to work on one
     /// trains everybody to ignore the warning that matters.
     #[test]

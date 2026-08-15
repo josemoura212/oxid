@@ -19,6 +19,19 @@ async fn run() -> anyhow::Result<()> {
     telemetry::init();
 
     let settings = configuration::load()?;
+
+    let environment = configuration::Environment::from_env()?;
+
+    // Refused before anything connects. Serde only proves the fields are there;
+    // a backend selected with an empty credential clears that bar and fails at
+    // send time instead — hours later, in a background task, to somebody waiting
+    // on an e-mail.
+    settings.validate(environment)?;
+
+    // And then what it gives up: a deploy that traded something away should say
+    // so in its first lines rather than be discovered from a support message.
+    settings.warn_about_tradeoffs(environment);
+
     let addr = settings.application.addr();
 
     // Before anything can record: a measurement taken with no recorder

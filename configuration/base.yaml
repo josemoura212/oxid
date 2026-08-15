@@ -82,6 +82,14 @@ email:
   # that mails for real spends provider quota to deliver a link nobody reads, and
   # a laptop with no API key would fail to start.
   backend: "off"
+  # Whether an unconfirmed address may sign in.
+  #
+  # On everywhere by default, including here, so development exercises the flow
+  # the product actually ships. Turning it off is for when there is no mail path
+  # at all — and it reopens account enumeration, because an account that works
+  # the moment it is created makes signup+login distinguish a free address from a
+  # taken one. The boot warns when it is off outside development.
+  require_confirmation: true
   # Where the links point. Overridden per environment.
   site_url: http://127.0.0.1:8080
   # No `resend:` block here on purpose. Naming it — even with empty values —

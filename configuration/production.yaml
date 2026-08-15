@@ -10,9 +10,14 @@ database:
   require_ssl: true
 
 email:
-  # `resend.api_key` is deliberately absent, like the database password — it
-  # comes from APP_EMAIL__RESEND__API_KEY.
+  # **No provider block here, and that is load-bearing.** Naming one — even with
+  # only a `from` in it — makes that provider's credential a required field for
+  # every deployment, including one that selected the other provider. It is the
+  # same shape as the missing ClickHouse password that stopped the migration Job
+  # from booting, and it would mean choosing Cloudflare still demanded a Resend
+  # key.
+  #
+  # Both fields of whichever provider is selected come from the environment: the
+  # address from the ConfigMap, the credential from a Secret.
   backend: resend
   site_url: https://oxid.uk
-  resend:
-    from: oxid <nao-responda@oxid.uk>

@@ -15,6 +15,7 @@
 //! another link", not "signup is down". Every function here returns `Result` so
 //! the caller can log it, and every caller logs rather than propagates.
 
+mod cloudflare;
 mod message;
 mod resend;
 mod template;
@@ -34,6 +35,9 @@ pub enum Mailer {
     /// the message silently would leave the flow untestable by hand.
     Disabled,
     Resend(resend::Client),
+    /// Cloudflare Email Service, over its REST endpoint. Same four fields, same
+    /// one call per message — no Worker involved.
+    Cloudflare(cloudflare::Client),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -59,6 +63,11 @@ impl Mailer {
                 settings.resend.api_key(),
                 &settings.resend.from,
             )),
+            EmailBackend::Cloudflare => Self::Cloudflare(cloudflare::Client::new(
+                settings.cloudflare.api_token(),
+                &settings.cloudflare.account_id,
+                &settings.cloudflare.from,
+            )),
         }
     }
 
@@ -69,7 +78,16 @@ impl Mailer {
     /// Whether messages actually leave the process. Tests assert on this so a
     /// misconfigured suite cannot quietly become a suite that mails people.
     pub const fn is_active(&self) -> bool {
-        matches!(self, Self::Resend(_))
+        matches!(self, Self::Resend(_) | Self::Cloudflare(_))
+    }
+
+    /// Which provider is wired, for a log line at boot. `None` when nothing is.
+    pub const fn provider(&self) -> Option<&'static str> {
+        match self {
+            Self::Disabled => None,
+            Self::Resend(_) => Some("resend"),
+            Self::Cloudflare(_) => Some("cloudflare"),
+        }
     }
 
     pub async fn send(&self, message: &Message) -> Result<(), MailError> {
@@ -87,6 +105,66 @@ impl Mailer {
                 Ok(())
             }
             Self::Resend(client) => client.send(message).await,
+            Self::Cloudflare(client) => client.send(message).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Lang, Mailer, Message};
+    use crate::configuration::{CloudflareSettings, EmailBackend, EmailSettings, ResendSettings};
+
+    fn settings(backend: EmailBackend) -> EmailSettings {
+        EmailSettings {
+            backend,
+            require_confirmation: true,
+            site_url: "https://oxid.uk".to_owned(),
+            resend: ResendSettings {
+                api_key: "placeholder".to_owned().into(),
+                from: "oxid <no-reply@oxid.uk>".to_owned(),
+            },
+            cloudflare: CloudflareSettings {
+                api_token: "placeholder".to_owned().into(),
+                account_id: "abc123".to_owned(),
+                from: "oxid <no-reply@oxid.uk>".to_owned(),
+            },
+        }
+    }
+
+    /// The backend in the configuration decides which client is built. Getting
+    /// this wrong means a deploy that believes it switched provider and did not.
+    #[test]
+    fn the_configured_backend_is_the_one_built() {
+        assert_eq!(Mailer::new(&settings(EmailBackend::Off)).provider(), None);
+        assert_eq!(
+            Mailer::new(&settings(EmailBackend::Resend)).provider(),
+            Some("resend")
+        );
+        assert_eq!(
+            Mailer::new(&settings(EmailBackend::Cloudflare)).provider(),
+            Some("cloudflare")
+        );
+    }
+
+    /// `is_active` is what the test suite asserts on to prove it never mails
+    /// anyone, so it has to be true for every provider and false only for off.
+    #[test]
+    fn only_the_disabled_mailer_is_inactive() {
+        assert!(!Mailer::disabled().is_active());
+        assert!(Mailer::new(&settings(EmailBackend::Resend)).is_active());
+        assert!(Mailer::new(&settings(EmailBackend::Cloudflare)).is_active());
+    }
+
+    /// Disabled has to *say* the message, link included: it is the only way the
+    /// confirmation flow stays completable on a laptop with no provider account,
+    /// and the configuration validator leans on that being true.
+    #[tokio::test]
+    async fn the_disabled_mailer_accepts_everything_and_sends_nothing() {
+        let mailer = Mailer::disabled();
+        let message = Message::confirm("a@b.test", "https://oxid.uk", "tok", Lang::Pt);
+
+        assert!(mailer.send(&message).await.is_ok());
+        assert!(!mailer.is_active());
     }
 }

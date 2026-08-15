@@ -93,6 +93,7 @@ async fn state(pool: &PgPool) -> Arc<AppState> {
         // reads -- to addresses that do not exist.
         mailer: Mailer::disabled(),
         site_url: BASE_URL.to_owned(),
+        require_confirmation: true,
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
         clicks_tx: ClickTx::disabled(),
@@ -359,6 +360,7 @@ async fn the_session_cookie_is_hardened(pool: PgPool) {
         // reads -- to addresses that do not exist.
         mailer: Mailer::disabled(),
         site_url: BASE_URL.to_owned(),
+        require_confirmation: true,
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
         clicks_tx: ClickTx::disabled(),
@@ -547,6 +549,7 @@ async fn logout_all_revokes_every_device(pool: PgPool) {
         tokens: OneTimeTokens::with_namespace(conn, &ns),
         mailer: Mailer::disabled(),
         site_url: BASE_URL.to_owned(),
+        require_confirmation: true,
         base_url: BASE_URL.to_owned(),
         clicks: ClickSink::disabled(),
         clicks_tx: ClickTx::disabled(),
@@ -1636,4 +1639,107 @@ async fn signup_then_login_cannot_tell_a_free_address_from_a_taken_one(pool: PgP
         statuses[0], statuses[1],
         "a taken address and a free one must answer the same, or signup + login is an enumerator"
     );
+}
+
+/// With confirmation off, an account works the moment it is created.
+///
+/// This is the flag's whole effect, and the test states the trade-off it buys as
+/// much as the behaviour: no link is sent, sign-in works immediately, and the
+/// account comes out already marked confirmed — so nothing downstream has to
+/// special-case a mode where verification never happened.
+#[sqlx::test(migrations = "../../migrations")]
+async fn without_confirmation_an_account_works_immediately(pool: PgPool) {
+    let app = app_without_confirmation(&pool).await;
+
+    let signup = app
+        .clone()
+        .oneshot(post(
+            "/v1/signup",
+            &json!({ "email": EMAIL, "password": PASSWORD }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(signup.status(), StatusCode::OK);
+
+    let login = app
+        .oneshot(post(
+            "/v1/login",
+            &json!({ "email": EMAIL, "password": PASSWORD }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        login.status(),
+        StatusCode::OK,
+        "with confirmation off, sign-in must not be gated"
+    );
+
+    let confirmed: Option<Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>> =
+        sqlx::query_scalar!(
+            "SELECT email_verified_at FROM users WHERE email = $1::text::citext",
+            EMAIL
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+
+    assert!(
+        confirmed.flatten().is_some(),
+        "the account must be marked confirmed rather than left in limbo"
+    );
+}
+
+/// The cost of turning it off, asserted rather than only documented.
+///
+/// With confirmation required, signup+login answers the same for a free address
+/// and a taken one. Without it, they differ — and this test says so, so that
+/// nobody reads the flag as free.
+#[sqlx::test(migrations = "../../migrations")]
+async fn without_confirmation_signup_and_login_do_enumerate(pool: PgPool) {
+    const PROBE: &str = "a-probe-password-nobody-uses";
+
+    let app = app_without_confirmation(&pool).await;
+
+    app.clone()
+        .oneshot(post(
+            "/v1/signup",
+            &json!({ "email": EMAIL, "password": PASSWORD }),
+        ))
+        .await
+        .unwrap();
+
+    let mut statuses = Vec::new();
+    for address in [EMAIL, "nobody-has-this@example.com"] {
+        app.clone()
+            .oneshot(post(
+                "/v1/signup",
+                &json!({ "email": address, "password": PROBE }),
+            ))
+            .await
+            .unwrap();
+
+        let login = app
+            .clone()
+            .oneshot(post(
+                "/v1/login",
+                &json!({ "email": address, "password": PROBE }),
+            ))
+            .await
+            .unwrap();
+
+        statuses.push(login.status());
+    }
+
+    assert_ne!(
+        statuses[0], statuses[1],
+        "if these ever match, the flag stopped costing what its docs say it costs"
+    );
+}
+
+/// The same state the suite builds, with confirmation turned off.
+async fn app_without_confirmation(pool: &PgPool) -> Router {
+    let mut state = (*state(pool).await).clone();
+    state.require_confirmation = false;
+
+    routes::router(Arc::new(state), permissive_rate_limit()).unwrap()
 }

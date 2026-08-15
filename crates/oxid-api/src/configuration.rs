@@ -30,12 +30,29 @@ pub struct Settings {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EmailSettings {
     pub backend: EmailBackend,
+
+    /// Whether an unconfirmed address may sign in.
+    ///
+    /// **Turning this off reopens account enumeration, and there is no way to
+    /// have both.** With confirmation required, a signup writes nothing a login
+    /// can probe: a fresh account cannot sign in, so the answer is the same for a
+    /// free address and a taken one. Without it, the account created by a signup
+    /// works immediately — so `signup` then `login` with a password of your
+    /// choosing succeeds on a free address and fails on a registered one, which
+    /// is two requests per address and no timing involved.
+    ///
+    /// It exists because development and tests need a way through without a mail
+    /// provider. Production keeps it on, and [`Settings::warn_about_tradeoffs`]
+    /// says so out loud at boot when it does not.
+    pub require_confirmation: bool,
     /// Where the links in the messages point. Separate from
     /// [`ApplicationSettings::base_url`] because the API and the front end can
     /// live on different hosts, and it is the front end a person clicks into.
     pub site_url: String,
     #[serde(default)]
     pub resend: ResendSettings,
+    #[serde(default)]
+    pub cloudflare: CloudflareSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -43,6 +60,44 @@ pub struct EmailSettings {
 pub enum EmailBackend {
     Off,
     Resend,
+    /// Cloudflare Email Service, over its REST API.
+    ///
+    /// No Worker involved: the binding is one of three ways in, and the HTTP one
+    /// is callable from anywhere — the same shape the Resend client already uses.
+    ///
+    /// Its quota is **adaptive** rather than published: an account "starts with a
+    /// conservative daily quota and scales up based on sending behaviour". That
+    /// is the reason both backends exist rather than one replacing the other —
+    /// hitting an unpublished ceiling on a confirmation link is somebody unable
+    /// to sign in, and switching back has to be an environment variable rather
+    /// than a deploy.
+    Cloudflare,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CloudflareSettings {
+    pub api_token: SecretString,
+    pub account_id: String,
+    /// The `From` address. Has to be on a domain verified in Cloudflare, the same
+    /// requirement Resend makes.
+    pub from: String,
+}
+
+/// By hand, for the same reason as [`ResendSettings::default`].
+impl Default for CloudflareSettings {
+    fn default() -> Self {
+        Self {
+            api_token: SecretString::from(String::new()),
+            account_id: String::new(),
+            from: String::new(),
+        }
+    }
+}
+
+impl CloudflareSettings {
+    pub fn api_token(&self) -> &str {
+        self.api_token.expose_secret()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -307,7 +362,7 @@ impl Environment {
         }
     }
 
-    fn from_env() -> anyhow::Result<Self> {
+    pub fn from_env() -> anyhow::Result<Self> {
         let raw = env::var("APP_ENVIRONMENT").unwrap_or_else(|_| Self::Local.as_str().to_owned());
 
         match raw.to_lowercase().as_str() {
@@ -335,6 +390,210 @@ fn config_dir() -> anyhow::Result<PathBuf> {
                 cwd.display()
             )
         })
+}
+
+/// Everything wrong with a configuration, reported together.
+///
+/// A `Vec` rather than the first problem found, because fixing environment
+/// variables one restart at a time is miserable: five mistakes should cost one
+/// boot, not five. This is the same reason a compiler does not stop at the first
+/// error.
+#[derive(Debug)]
+pub struct Invalid(Vec<String>);
+
+impl std::fmt::Display for Invalid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "the configuration cannot be used:")?;
+
+        for problem in &self.0 {
+            writeln!(f, "  - {problem}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl std::error::Error for Invalid {}
+
+impl Invalid {
+    pub fn problems(&self) -> &[String] {
+        &self.0
+    }
+}
+
+/// A URL that has to be usable as one, not merely present.
+///
+/// Checked because `site_url` ends up inside every confirmation link. Empty or
+/// scheme-less, the link is unclickable and the failure surfaces in somebody
+/// else's inbox — the slowest possible place to learn about a typo.
+fn check_url(problems: &mut Vec<String>, name: &str, value: &str) {
+    if value.trim().is_empty() {
+        problems.push(format!("{name} is empty"));
+    } else if !value.starts_with("http://") && !value.starts_with("https://") {
+        problems.push(format!(
+            "{name} must start with http:// or https://, got {value:?}"
+        ));
+    }
+}
+
+fn check_present(problems: &mut Vec<String>, name: &str, value: &str) {
+    if value.trim().is_empty() {
+        problems.push(format!(
+            "{name} is required by the selected backend and is empty"
+        ));
+    }
+}
+
+/// Something a configuration gives up, named rather than described inline.
+///
+/// An enum instead of a `warn!` at the point of decision, because the decision is
+/// worth testing and a log line is not: a function that only writes to a logger
+/// can be asserted on by nobody, and this is exactly the kind of guard that stops
+/// firing without anyone noticing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tradeoff {
+    /// An account works the moment it is created, so signup followed by login
+    /// tells a free address from a registered one.
+    EnumerationOpen,
+    /// Confirmation and reset links go to the log instead of to anybody.
+    NobodyReceivesMail,
+}
+
+impl Tradeoff {
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::EnumerationOpen => {
+                "email confirmation is OFF: an account works the moment it is created, so                  signup followed by login tells a free address from a registered one. Account                  enumeration is open while this stays off."
+            }
+            Self::NobodyReceivesMail => {
+                "the mailer is OFF: confirmation and password-reset links are written to this                  log instead of being sent, and nobody receives them."
+            }
+        }
+    }
+}
+
+impl Settings {
+    /// Refuses a configuration that deserializes but cannot work.
+    ///
+    /// Serde only proves the fields are *there*. A backend selected with an empty
+    /// credential passes that bar and then fails at send time — which is minutes
+    /// or hours later, in a background task, to a person who is waiting on an
+    /// e-mail. Everything checked here is something that would otherwise be
+    /// discovered far away from its cause.
+    pub fn validate(&self, environment: Environment) -> Result<(), Invalid> {
+        let mut problems = Vec::new();
+
+        // **Confirmation required with no provider is a dead end — in production.**
+        // Accounts get created that nobody can confirm, and nobody can sign in.
+        //
+        // Not an error on a laptop, and that exception is not laziness: the
+        // disabled mailer logs the whole message, link included, precisely so the
+        // flow stays completable by hand without a provider account. On a
+        // developer's terminal that is a working path; in a cluster nobody reads
+        // pod logs to activate their own account.
+        if environment == Environment::Production
+            && self.email.require_confirmation
+            && self.email.backend == EmailBackend::Off
+        {
+            problems.push(
+                "email.require_confirmation is on but email.backend is off: accounts would be \
+                 created that nobody can confirm, and nobody could sign in. Select a provider, \
+                 or turn confirmation off."
+                    .to_owned(),
+            );
+        }
+
+        check_url(
+            &mut problems,
+            "application.base_url",
+            &self.application.base_url,
+        );
+        check_url(&mut problems, "email.site_url", &self.email.site_url);
+
+        match self.email.backend {
+            EmailBackend::Off => {}
+            EmailBackend::Resend => {
+                check_present(
+                    &mut problems,
+                    "email.resend.api_key",
+                    self.email.resend.api_key(),
+                );
+                check_present(&mut problems, "email.resend.from", &self.email.resend.from);
+            }
+            EmailBackend::Cloudflare => {
+                check_present(
+                    &mut problems,
+                    "email.cloudflare.api_token",
+                    self.email.cloudflare.api_token(),
+                );
+                check_present(
+                    &mut problems,
+                    "email.cloudflare.account_id",
+                    &self.email.cloudflare.account_id,
+                );
+                check_present(
+                    &mut problems,
+                    "email.cloudflare.from",
+                    &self.email.cloudflare.from,
+                );
+            }
+        }
+
+        if self.analytics.backend == AnalyticsBackend::ClickHouse {
+            check_present(
+                &mut problems,
+                "analytics.clickhouse.host",
+                &self.analytics.clickhouse.host,
+            );
+        }
+
+        // A pool of zero accepts no connection and every request waits for a slot
+        // that never frees. It deserializes fine.
+        if self.database.max_connections == 0 {
+            problems.push("database.max_connections is 0, so no query can ever run".to_owned());
+        }
+
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(Invalid(problems))
+        }
+    }
+
+    /// What this configuration gives up, in the environment it runs in.
+    ///
+    /// Empty outside production on purpose: both of these are the normal way to
+    /// work on a laptop, and warning about them there would train everyone to
+    /// ignore the warning that matters.
+    pub fn tradeoffs(&self, environment: Environment) -> Vec<Tradeoff> {
+        if environment != Environment::Production {
+            return Vec::new();
+        }
+
+        let mut found = Vec::new();
+
+        if !self.email.require_confirmation {
+            found.push(Tradeoff::EnumerationOpen);
+        }
+
+        if self.email.backend == EmailBackend::Off {
+            found.push(Tradeoff::NobodyReceivesMail);
+        }
+
+        found
+    }
+
+    /// Says them out loud at boot.
+    ///
+    /// Not a refusal: both are legitimate somewhere. What they cannot be is
+    /// silent — a production deploy that stopped requiring confirmation should
+    /// say so in the first ten lines of its log rather than be discovered from a
+    /// support message.
+    pub fn warn_about_tradeoffs(&self, environment: Environment) {
+        for tradeoff in self.tradeoffs(environment) {
+            tracing::warn!("{}", tradeoff.message());
+        }
+    }
 }
 
 /// The layering, without reading the environment for which layer to pick.
@@ -377,7 +636,7 @@ mod tests {
     /// `ConfigMap` plus the three Secrets — kept in one place so adding a secret
     /// means updating this list, and the production test keeps meaning "this is
     /// what the Deployment actually provides".
-    const CLUSTER_ENV: [(&str, &str); 6] = [
+    const CLUSTER_ENV: [(&str, &str); 7] = [
         ("database.password", "x"),
         ("database.username", "oxid"),
         ("database.database_name", "oxid"),
@@ -387,6 +646,10 @@ mod tests {
         // their scanner matches, and a placeholder that trips it costs a
         // review cycle to explain every time.
         ("email.resend.api_key", "placeholder"),
+        // Both halves. A provider block is all-or-nothing: naming one field
+        // creates the block and makes the rest required, which is exactly why no
+        // `.yaml` names either provider any more.
+        ("email.resend.from", "oxid <no-reply@oxid.uk>"),
     ];
 
     fn assemble(environment: &str, overrides: &[(&str, &str)]) -> anyhow::Result<Settings> {
@@ -443,9 +706,13 @@ mod tests {
         );
     }
 
-    /// What the migration Job does: same files, backend off, placeholder key.
+    /// The other provider selects and deserializes from the environment alone.
+    ///
+    /// Cloudflare's block has no entry in any `.yaml` — it exists only if the
+    /// deployment injects it, which is what makes switching providers an
+    /// environment change rather than a deploy.
     #[test]
-    fn the_migration_jobs_overrides_are_enough_to_boot() {
+    fn cloudflare_can_be_selected_entirely_from_the_environment() {
         let settings = assemble(
             "production",
             &[
@@ -454,12 +721,273 @@ mod tests {
                 ("database.database_name", "oxid"),
                 ("analytics.backend", "off"),
                 ("analytics.clickhouse.password", ""),
-                ("email.backend", "off"),
-                ("email.resend.api_key", ""),
+                ("email.backend", "cloudflare"),
+                ("email.cloudflare.api_token", "placeholder"),
+                ("email.cloudflare.account_id", "abc123"),
+                ("email.cloudflare.from", "oxid <no-reply@oxid.uk>"),
             ],
         )
-        .expect("the migrator must boot with no credentials it cannot use");
+        .expect("cloudflare must select from the environment alone");
+
+        assert_eq!(settings.email.backend, super::EmailBackend::Cloudflare);
+        assert_eq!(settings.email.cloudflare.account_id, "abc123");
+    }
+
+    /// Confirmation is required unless something turns it off, and nothing in the
+    /// files does. A default that silently let unconfirmed accounts sign in would
+    /// be the enumeration hole arriving by omission.
+    #[test]
+    fn confirmation_is_required_by_default_everywhere() {
+        for environment in ["local", "production"] {
+            let overrides: Vec<(&str, &str)> = CLUSTER_ENV.into_iter().collect();
+            let settings = assemble(environment, &overrides).expect("must load");
+
+            assert!(
+                settings.email.require_confirmation,
+                "{environment} does not require confirmation"
+            );
+        }
+    }
+
+    // --- the validator ---
+    //
+    // Every one of these is a configuration that *deserializes*. Serde proves the
+    // fields are there; these prove they mean something.
+
+    fn production_with(extra: &[(&str, &str)]) -> Settings {
+        let mut overrides: Vec<(&str, &str)> = CLUSTER_ENV.into_iter().collect();
+        overrides.extend_from_slice(extra);
+
+        assemble("production", &overrides).expect("must deserialize")
+    }
+
+    fn problems(settings: &Settings, environment: super::Environment) -> Vec<String> {
+        settings
+            .validate(environment)
+            .err()
+            .map(|invalid| invalid.problems().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// What actually ships has to pass. If this fails, the validator is wrong
+    /// rather than the configuration.
+    #[test]
+    fn the_shipped_configurations_are_valid() {
+        assemble("production", &CLUSTER_ENV)
+            .expect("must deserialize")
+            .validate(super::Environment::Production)
+            .expect("production must be valid");
+
+        assemble("local", &[])
+            .expect("must deserialize")
+            .validate(super::Environment::Local)
+            .expect("local must be valid");
+    }
+
+    /// A backend selected with an empty credential deserializes fine and then
+    /// fails at send time — in a background task, hours later, to somebody
+    /// waiting on an e-mail.
+    #[test]
+    fn a_provider_without_its_credential_is_refused() {
+        let settings = production_with(&[("email.resend.api_key", "")]);
+        let found = problems(&settings, super::Environment::Production);
+
+        assert!(
+            found.iter().any(|p| p.contains("email.resend.api_key")),
+            "an empty Resend key was accepted: {found:?}"
+        );
+    }
+
+    #[test]
+    fn cloudflare_needs_all_three_of_its_fields() {
+        let settings = production_with(&[
+            ("email.backend", "cloudflare"),
+            ("email.cloudflare.api_token", ""),
+            ("email.cloudflare.account_id", ""),
+            ("email.cloudflare.from", ""),
+        ]);
+        let found = problems(&settings, super::Environment::Production);
+
+        for field in ["api_token", "account_id", "from"] {
+            assert!(
+                found.iter().any(|p| p.contains(field)),
+                "cloudflare.{field} was accepted empty: {found:?}"
+            );
+        }
+    }
+
+    /// Selecting one provider must not demand the other's credentials — the whole
+    /// point of keeping provider blocks out of the `.yaml`.
+    #[test]
+    fn choosing_cloudflare_does_not_require_resend() {
+        let settings = production_with(&[
+            ("email.backend", "cloudflare"),
+            ("email.cloudflare.api_token", "placeholder"),
+            ("email.cloudflare.account_id", "abc123"),
+            ("email.cloudflare.from", "oxid <no-reply@oxid.uk>"),
+            ("email.resend.api_key", ""),
+        ]);
+
+        settings
+            .validate(super::Environment::Production)
+            .expect("cloudflare must not be blocked by an unused Resend key");
+    }
+
+    /// Confirmation on with no provider creates accounts nobody can confirm.
+    #[test]
+    fn confirmation_without_a_provider_is_refused_in_production() {
+        let settings = production_with(&[("email.backend", "off")]);
+        let found = problems(&settings, super::Environment::Production);
+
+        assert!(
+            found.iter().any(|p| p.contains("nobody can confirm")),
+            "a production deploy that cannot confirm anyone was accepted: {found:?}"
+        );
+    }
+
+    /// The same configuration is fine on a laptop, and that exception is the
+    /// reason the disabled mailer logs the whole message: the link is right there
+    /// in the terminal, so the flow stays completable by hand.
+    #[test]
+    fn confirmation_without_a_provider_is_fine_locally() {
+        let settings = assemble("local", &[]).expect("must deserialize");
 
         assert_eq!(settings.email.backend, super::EmailBackend::Off);
+        assert!(settings.email.require_confirmation);
+
+        settings
+            .validate(super::Environment::Local)
+            .expect("local must stay usable without a mail provider");
+    }
+
+    /// `site_url` ends up inside every confirmation link. Scheme-less, the link is
+    /// unclickable and the typo surfaces in somebody else's inbox.
+    #[test]
+    fn a_link_target_without_a_scheme_is_refused() {
+        let settings = production_with(&[("email.site_url", "oxid.uk")]);
+        let found = problems(&settings, super::Environment::Production);
+
+        assert!(
+            found.iter().any(|p| p.contains("email.site_url")),
+            "a scheme-less site_url was accepted: {found:?}"
+        );
+    }
+
+    /// One boot should cost one round of fixes, not one fix per boot.
+    #[test]
+    fn every_problem_is_reported_at_once() {
+        let settings = production_with(&[
+            ("email.site_url", "oxid.uk"),
+            ("email.resend.api_key", ""),
+            ("database.max_connections", "0"),
+        ]);
+        let found = problems(&settings, super::Environment::Production);
+
+        assert!(
+            found.len() >= 3,
+            "the validator stopped at the first problem: {found:?}"
+        );
+    }
+
+    /// The message a person reads when the boot refuses. Worth pinning: it is
+    /// the entire diagnosis, delivered once, in a container that then exits.
+    #[test]
+    fn the_refusal_lists_every_problem_by_name() {
+        let settings = production_with(&[("email.site_url", ""), ("email.resend.from", "")]);
+        let printed = settings
+            .validate(super::Environment::Production)
+            .expect_err("must be refused")
+            .to_string();
+
+        assert!(printed.contains("email.site_url"), "{printed}");
+        assert!(printed.contains("email.resend.from"), "{printed}");
+        assert!(printed.contains("cannot be used"), "{printed}");
+    }
+
+    /// Each trade-off says something different and says something at all. An empty
+    /// or duplicated message is a warning that scrolls past unread.
+    #[test]
+    fn each_tradeoff_reads_differently() {
+        let enumeration = super::Tradeoff::EnumerationOpen.message();
+        let silent = super::Tradeoff::NobodyReceivesMail.message();
+
+        assert!(!enumeration.is_empty());
+        assert!(!silent.is_empty());
+        assert_ne!(enumeration, silent);
+    }
+
+    /// A laptop is not a deployment. Warning about the normal way to work on one
+    /// trains everybody to ignore the warning that matters.
+    #[test]
+    fn nothing_is_flagged_outside_production() {
+        let settings = assemble("local", &[]).expect("local must load");
+
+        assert!(settings.tradeoffs(super::Environment::Local).is_empty());
+    }
+
+    /// The two things a production deploy can give up, each named once.
+    #[test]
+    fn production_names_what_it_gave_up() {
+        let mut overrides: Vec<(&str, &str)> = CLUSTER_ENV.into_iter().collect();
+        overrides.push(("email.require_confirmation", "false"));
+
+        let settings = assemble("production", &overrides).expect("must load");
+
+        assert_eq!(
+            settings.tradeoffs(super::Environment::Production),
+            vec![super::Tradeoff::EnumerationOpen],
+            "turning confirmation off in production has to be said out loud"
+        );
+    }
+
+    #[test]
+    fn a_production_deploy_that_sends_nothing_says_so() {
+        let mut overrides: Vec<(&str, &str)> = CLUSTER_ENV.into_iter().collect();
+        overrides.push(("email.backend", "off"));
+
+        let settings = assemble("production", &overrides).expect("must load");
+
+        assert_eq!(
+            settings.tradeoffs(super::Environment::Production),
+            vec![super::Tradeoff::NobodyReceivesMail]
+        );
+    }
+
+    /// The configuration everything actually ships with gives nothing up.
+    #[test]
+    fn the_shipped_production_configuration_is_clean() {
+        let settings = assemble("production", &CLUSTER_ENV).expect("must load");
+
+        assert!(
+            settings
+                .tradeoffs(super::Environment::Production)
+                .is_empty(),
+            "production is trading something away without meaning to"
+        );
+    }
+
+    /// What the migration Job does, built the way the Job is actually built.
+    ///
+    /// **On top of `CLUSTER_ENV`, not instead of it.** The Job pulls the same
+    /// `oxid-config` map the API does, through `envFrom`, and then overrides
+    /// a few keys with its own `env`. Testing the overrides alone would have
+    /// missed exactly the failure this test exists for: that map now carries
+    /// `APP_EMAIL__RESEND__FROM`, which creates a partial provider block and makes
+    /// the credential required for a process that sends nothing.
+    #[test]
+    fn the_migration_jobs_overrides_are_enough_to_boot() {
+        let mut overrides: Vec<(&str, &str)> = CLUSTER_ENV.into_iter().collect();
+        overrides.extend([
+            ("analytics.backend", "off"),
+            ("analytics.clickhouse.password", ""),
+            ("email.backend", "off"),
+            ("email.resend.api_key", ""),
+        ]);
+
+        let settings = assemble("production", &overrides)
+            .expect("the migrator must boot with no credentials it cannot use");
+
+        assert_eq!(settings.email.backend, super::EmailBackend::Off);
+        assert_eq!(settings.analytics.backend, super::AnalyticsBackend::Off);
     }
 }

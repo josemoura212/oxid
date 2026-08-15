@@ -854,6 +854,80 @@ caminhos em vez de um formulário de suporte.
 A checagem fica **depois** da senha no `login`, nunca antes, e responde o mesmo 401. Ver o
 oráculo acima.
 
+### Dois provedores, escolhidos por variável de ambiente
+
+Resend e **Cloudflare Email Service** atrás do mesmo `Mailer`. Trocar é editar
+`APP_EMAIL__BACKEND` no ConfigMap — não é deploy, não é código.
+
+**Não precisa de Worker.** O painel do Cloudflare leva para o binding de Workers,
+mas o serviço tem endpoint REST chamável de qualquer lugar, com os mesmos quatro
+campos que o Resend usa (`from`/`to`/`subject`/`html`/`text`). O cliente novo é o
+`resend.rs` com outra URL.
+
+Por que os dois existem em vez de um substituir o outro:
+
+| | Resend | Cloudflare |
+|---|---|---|
+| Custo | grátis: 3.000/mês, 100/dia | exige Workers Paid |
+| Estado | estável | Beta |
+| Quota | número publicado | **adaptativa**, sem número publicado |
+
+A quota adaptativa é o motivo. "Começa conservadora e escala conforme seu
+comportamento de envio" significa não saber o teto de hoje, e descobrir ao bater
+nele — que para link de confirmação é gente sem conseguir entrar. Poder voltar
+por variável de ambiente é o que torna experimentar barato.
+
+**Nenhum `.yaml` nomeia bloco de provedor, e isso é estrutural.** Nomear um — mesmo
+só com o `from` — torna a credencial daquele provedor obrigatória em todo
+ambiente, inclusive no que escolheu o outro. É a mesma forma da senha do
+ClickHouse que derrubou o Job de migração, e significaria que escolher Cloudflare
+ainda exigiria chave do Resend. Os dois campos de cada provedor vêm do ambiente:
+o endereço do ConfigMap, a credencial de um Secret.
+
+### `require_confirmation`, e o que desligá-la custa
+
+`APP_EMAIL__REQUIRE_CONFIRMATION=false` deixa a conta valer no instante em que é
+criada — sem link, sem trava no login.
+
+**Isso reabre a enumeração, e não dá para ter as duas coisas.** Com confirmação
+exigida, o signup não escreve nada que o login consiga sondar: conta nova não
+entra, então a resposta é igual para endereço livre e tomado. Sem ela, a conta
+criada funciona na hora — e `signup` seguido de `login` com uma senha escolhida
+por você entra num endereço livre e falha num registrado.
+
+É inerente, não um descuido de implementação: se a conta criada já serve para
+entrar, o resultado do login distingue os dois casos.
+
+A flag existe porque desenvolvimento e teste precisam de caminho sem provedor de
+e-mail. Em produção o boot **avisa em `warn`** quando ela está desligada, dizendo
+o que está sendo trocado — desligar vira decisão registrada, não silêncio. Dois
+testes guardam os dois lados: `without_confirmation_an_account_works_immediately`
+e `without_confirmation_signup_and_login_do_enumerate`, o segundo afirmando o
+custo em vez de só documentá-lo.
+
+### O validador de configuração
+
+`Settings::validate` roda antes de qualquer conexão e **recusa o boot**. Serde só
+prova que os campos existem; isto prova que significam alguma coisa.
+
+O que ele pega, e o que cada um custaria sem ele:
+
+| Regra | Onde a falha apareceria sem isso |
+|---|---|
+| Provedor selecionado com credencial vazia | na hora de enviar, em tarefa de fundo, para quem espera o e-mail |
+| Confirmação exigida e nenhum provedor | contas criadas que ninguém consegue confirmar |
+| `site_url` sem esquema | link inclicável, na caixa de entrada de outra pessoa |
+| `max_connections: 0` | toda requisição esperando um slot que nunca libera |
+
+**Reporta todos de uma vez**, não o primeiro. Corrigir variável de ambiente um
+boot por vez é miserável — cinco erros devem custar um boot, não cinco.
+
+A regra de "confirmação exige provedor" **só vale em produção**, e a exceção não é
+preguiça: o mailer desabilitado registra a mensagem inteira no log, link incluído,
+justamente para o fluxo continuar percorrível à mão sem conta em provedor nenhum.
+No terminal de quem desenvolve isso é um caminho que funciona; num cluster,
+ninguém lê log de pod para ativar a própria conta.
+
 **E-mail é canal que você não controla.** Entrega não é garantida — spam, greylisting,
 domínio novo sem reputação. Duas consequências: o fluxo **precisa** de reenviar, e o
 domínio precisa de SPF/DKIM/DMARC configurados no Resend antes de qualquer envio valer.

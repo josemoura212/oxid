@@ -270,6 +270,21 @@ pub struct RateLimitSettings {
     /// Bounded, because waiting forever trades a saturated CPU for an unbounded
     /// queue — which fails later, less legibly, and while holding connections.
     pub hash_wait_ms: u64,
+
+    /// The tightest limit in the file, and the only one where the cost lands on
+    /// somebody else.
+    ///
+    /// Every call to "resend my confirmation" or "I forgot my password" puts a
+    /// message in a stranger's inbox. Unlimited, the pair is a mail-bombing tool
+    /// pointed at any address an attacker chooses — and each send also spends
+    /// provider quota this project pays for.
+    ///
+    /// Deliberately per-second-and-burst like the others rather than a daily cap
+    /// per address. A daily cap keyed by e-mail would need state per address and
+    /// would itself be an oracle: "you have asked too many times" is only true
+    /// for an address that exists.
+    pub email_per_second: u64,
+    pub email_burst: u32,
 }
 
 impl RateLimitSettings {

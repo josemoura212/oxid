@@ -440,7 +440,7 @@ e as Etapas 9-10 medem melhor um sistema sem sessão no caminho.
 - [x] **Extra:** front com diálogo de conta, lista da conta e importação no cadastro
 - [x] **Extra:** `POST /v1/logout-all` — "sair de todos os dispositivos", ver abaixo
 - [x] **Extra:** testes de CORS/CSRF travando a proteção emergente, ver abaixo
-- [ ] Fechar a enumeração de contas no `signup` — precisa de e-mail, ver abaixo
+- [x] Fechar a enumeração de contas no `signup` — fechada pela Etapa 15: o `409 EmailTaken` deixou de existir
 
 🎯 ✅ Duas contas encurtando a mesma URL recebem **códigos diferentes** apontando para a
    **mesma linha** em `urls`; a mesma conta encurtando duas vezes recebe o mesmo código;
@@ -764,24 +764,26 @@ ou tabela de agregado diário — a mesma decisão de rollup que a Etapa 12 já 
 dado de produto. Reimplementar gráfico de latência aqui seria trabalho duplicado com
 resultado pior — o caminho é embutir o painel do Grafana ou apontar para ele.
 
-## Etapa 15 — Confirmação de e-mail (Resend)
+## Etapa 15 — Confirmação de e-mail (Resend) ✅
 
 **Não é urgente: login já funciona sem confirmar e-mail.** Fica aqui, depois do núcleo, de
 propósito. O que ela paga é fechar a enumeração do signup (a pendência da Etapa 11) — hoje
 um trade-off aceito, não um bug. Enquanto não vier, o `409 EmailTaken` continua entregando
 quais e-mails têm conta.
 
-- [ ] Integração com **Resend** atrás de um tipo `Mailer`, com variante desabilitada — do
+- [x] Integração com **Resend** atrás de um tipo `Mailer`, com variante desabilitada — do
       mesmo jeito que `Cache::disabled()` e o `ClickSink` da Etapa 12. Local e teste **não
-      enviam**: registram o link no log. Sem isso, todo teste de cadastro manda e-mail de
-      verdade e gasta cota
-- [ ] Coluna `email_verified_at timestamptz NULL` em `users`
-- [ ] Token de confirmação: 128 bits aleatórios, no Redis com TTL, chave → `user_id`.
+      enviam**: registram o link no log, com o link inteiro, para o fluxo ser percorrível à
+      mão sem chave nenhuma
+- [x] Coluna `email_verified_at timestamptz NULL` em `users`
+- [x] Token de confirmação: 128 bits aleatórios, no Redis com TTL, chave → `user_id`.
       Não é JWT — um token opaco de uso único é mais simples e revogável, e não há claim
-      nenhuma que valha assinar
-- [ ] `POST /v1/verify-email` consome o token, grava `email_verified_at`, apaga o token
-- [ ] Reenvio: `POST /v1/resend-verification`, com rate limit próprio (cada envio custa uma
-      chamada ao Resend e é vetor de e-mail bombing)
+      nenhuma que valha assinar. Uso único garantido por `GETDEL`, que é uma ida só: com
+      `GET` + `DEL`, dois cliques simultâneos leriam o mesmo valor e os dois passariam
+- [x] `POST /v1/verify-email` consome o token, grava `email_verified_at`, apaga o token
+- [x] Reenvio: `POST /v1/resend-verification`, com rate limit próprio (cada envio custa uma
+      chamada ao Resend e é vetor de e-mail bombing). Emitir um link novo **aposenta o
+      anterior** — pedir três vezes deixa um funcionando, não três
 
 🎯 Cadastrar com um endereço novo e com um já cadastrado devolve **a mesma resposta HTTP** e
    o mesmo tempo; só o dono do endereço descobre qual foi, pela caixa de entrada.
@@ -792,11 +794,65 @@ existente → **não cria nada** e manda um "alguém tentou cadastrar com seu e-
 resposta ao cliente é idêntica nos dois casos; a diferença viaja só pelo canal que o
 atacante não controla. O `409 EmailTaken` de hoje deixa de existir.
 
-**O que "não verificado" bloqueia é decisão de produto, não técnica.** Duas posturas
-coerentes: (a) não deixa entrar até confirmar — mais rígido, e trava quem não recebeu o
-e-mail; (b) deixa usar e mostra um aviso, exigindo confirmação só para o reset de senha.
-Para um encurtador, (b) atrita menos e não perde ninguém por causa de spam filter. A
-escolha fica registrada quando for feita.
+### O oráculo que eu abri fechando o outro
+
+Vale registrar porque é o achado mais caro desta etapa, e foi introduzido pela
+própria correção.
+
+Com o `409 EmailTaken` removido, o signup passou a responder 200 sempre. Mas ele
+**criava a conta** no endereço livre, e o login respondia **403** para conta não
+confirmada e **401** para senha errada. Duas requisições por endereço:
+
+```
+POST /v1/signup {alvo, <senha aleatória R>}   → 200 sempre
+POST /v1/login  {alvo, R}
+   → 403  ⇒ o endereço estava LIVRE  (o signup criou com hash(R))
+   → 401  ⇒ o endereço JÁ tinha conta (o signup foi no-op, R não bate)
+```
+
+Determinístico, sem timing. O oráculo tinha mudado de rota, não sumido.
+
+**Correção: conta não confirmada responde 401, igual a senha errada.** A variante
+`EmailNotVerified` e o 403 deixaram de existir. O custo é real — quem acerta a
+senha ouve que errou — e é pago na tela: o reenvio da confirmação fica visível
+**sempre** ao lado de "esqueceu a senha", não em reação ao erro. Aparecer só para
+endereço não confirmado colocaria o oráculo de volta na interface.
+
+Guardado por `signup_then_login_cannot_tell_a_free_address_from_a_taken_one`.
+
+### Três outras coisas que a revisão pegou
+
+1. **`/v1/reset-password` sem rate limit, com `hash_concurrency: 1`.** Um link
+   válido submetido em paralelo passava todo mundo pelo `peek` antes de qualquer
+   `consume` vencer, e cada um pagava um Argon2 — saturando o único slot de
+   hashing do processo e derrubando login e signup com 503. Corrigido em dois
+   lugares: a rota entrou no `expensive_limit`, e a ordem virou
+   `consume → hash`, então os perdedores são recusados antes de gastar.
+2. **Signup como ferramenta de mail bomb.** Ele estava no limite de login (2/s),
+   o dobro do limite dedicado a e-mail, e sempre gera envio — confirmação para
+   endereço livre, aviso para endereço tomado. Passou para o `email_limit`.
+3. **Token de API sobrevivia ao reset.** Uma sessão roubada consegue emitir um
+   PAT, que não expira e não é tocado por `revoke_all`. Quem resetasse a senha
+   depois de um comprometimento matava os cookies e deixava o invasor com uma
+   credencial viva. `revoke_all_tokens` entrou na mesma transação lógica.
+
+**Ainda em aberto, registrado e não feito:** teto por *destinatário* (o limite é
+por IP de origem, e um /64 IPv6 contorna); e a assimetria de tempo em
+`forgot-password`/`resend-verification`, onde o endereço conhecido gasta 3 a 4
+round trips a mais no Redis. Nenhum dos dois é explorável em varredura, mas o
+segundo permite responder "fulano tem conta?" com paciência.
+
+**O que "não verificado" bloqueia — decidido: (a), o login.** Em 15/08/2026 ficou a postura
+rígida: sem confirmar, não entra. O texto abaixo previa (b) como o de menos atrito, e a
+escolha foi contra essa previsão de propósito — um encurtador com conta não confirmada é uma
+conta cujo dono do endereço nunca concordou com nada.
+
+O atrito que (a) cria é real e tem duas saídas prontas: o reenvio, e o fato de que **completar
+um reset de senha também confirma** o endereço. Quem não recebeu o primeiro e-mail tem dois
+caminhos em vez de um formulário de suporte.
+
+A checagem fica **depois** da senha no `login`, nunca antes, e responde o mesmo 401. Ver o
+oráculo acima.
 
 **E-mail é canal que você não controla.** Entrega não é garantida — spam, greylisting,
 domínio novo sem reputação. Duas consequências: o fluxo **precisa** de reenviar, e o
@@ -808,25 +864,39 @@ vem depois e a falha dele não derruba o signup — a pessoa pede reenvio. Amarr
 da conta ao sucesso do envio transforma um provedor de e-mail fora do ar numa
 indisponibilidade do cadastro.
 
-## Etapa 16 — Reset de senha (Resend)
+## Etapa 16 — Reset de senha (Resend) ✅
 
 Depois da Etapa 15 — reaproveita o `Mailer` já integrado. Duas etapas distintas de
 propósito: confirmação prova que o endereço é seu; reset devolve o acesso quando a senha
 se perde. São fluxos, tokens e telas diferentes, e juntar os dois num só esconde que as
 regras de segurança de cada um também são diferentes.
 
-- [ ] `POST /v1/forgot-password` recebe o e-mail e responde **sempre 200** — mesma defesa
+- [x] `POST /v1/forgot-password` recebe o e-mail e responde **sempre 200** — mesma defesa
       contra enumeração da Etapa 15. Se existe, manda o link; se não, não faz nada
-- [ ] Token de reset: 128 bits, Redis, TTL **curto** (15–30 min) e **uso único** — some no
-      primeiro uso. Mais curto que o de confirmação, porque dá acesso à conta, não só a
-      prová-la
-- [ ] `POST /v1/reset-password` valida o token, valida a nova senha (mesmas regras do
-      signup), re-hasheia e grava
-- [ ] **Ao trocar a senha, revoga todas as sessões** — é exatamente o `revoke_all` do índice
+- [x] Token de reset: 128 bits, Redis, TTL **de 2 horas** e **uso único**. Mais curto que o
+      de confirmação (24 h), porque dá acesso à conta, não só a prová-la. Duas horas e não
+      os 15–30 min previstos aqui: decisão de produto tomada em 15/08/2026, trocando um
+      pouco de janela por não expirar antes de a pessoa abrir a caixa de entrada.
+
+      **Validado ao abrir, consumido ao salvar.** Gastar o token no carregamento da página
+      mataria o link antes de alguém digitar qualquer coisa — um refresh, uma segunda aba ou
+      um cliente de e-mail que pré-carrega links bastaria. Por isso `peek` existe separado de
+      `consume`.
+
+      **O link viaja no fragmento (`/#reset=…`), não na query.** Fragmento nunca chega ao
+      servidor. Na query, todo clique escrevia `GET /?reset=<token>` em texto puro no access
+      log do nginx — e o token de reset sobrevive ao clique, porque abrir só valida. Ler log
+      de pod bastava para tomar a conta antes de a pessoa terminar de digitar a senha nova
+- [x] `POST /v1/reset-password` valida o token, valida a nova senha (mesmas regras do
+      signup), re-hasheia e grava. Também **confirma o endereço de passagem**: ler a mensagem
+      enviada para ele é a mesma prova que o link de confirmação pede
+- [x] **Ao trocar a senha, revoga todas as sessões** — é exatamente o `revoke_all` do índice
       reverso que a Etapa 11 já construiu. Quem redefine senha geralmente perdeu o controle
       da conta; deixar as sessões antigas vivas anularia o reset
-- [ ] Rate limit próprio no `forgot-password`: cada chamada é um envio de e-mail (custo e
-      e-mail bombing) e o Argon2 do reset é caro
+- [x] Rate limit próprio no `forgot-password`: cada chamada é um envio de e-mail (custo e
+      e-mail bombing) e o Argon2 do reset é caro. Compartilhado com o `resend-verification`,
+      em `rate_limit.email_*` — são as duas únicas rotas cujo custo cai em quem não fez o
+      pedido
 
 🎯 Esqueci a senha → recebo o link → defino outra → entro com ela, e **toda sessão anterior
    deixou de valer**.

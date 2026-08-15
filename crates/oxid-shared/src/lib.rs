@@ -46,6 +46,45 @@ pub struct CredentialsRequest {
     pub password: String,
 }
 
+/// An address on its own: "send me the confirmation again", "I forgot my
+/// password".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailRequest {
+    pub email: String,
+}
+
+/// A one-time link being spent. Used by the confirmation, which needs nothing
+/// else.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenRequest {
+    pub token: String,
+}
+
+/// The reset, which is a token plus what to set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResetPasswordRequest {
+    pub token: String,
+    pub password: String,
+}
+
+/// What a signup answers now.
+///
+/// **Deliberately the same for a new address and one that already has an
+/// account.** The response, the status and the time taken must not differ, or
+/// the form becomes an account enumerator again. Which message arrives — a
+/// confirmation link, or a "someone tried to sign up with your address" notice —
+/// is the only difference, and it travels through the channel an attacker does
+/// not control.
+///
+/// It carries no account id and sets no cookie: at this point nobody is signed
+/// in, and there may not even be a new account.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignupResponse {
+    /// Echoed back so the front end can say "we sent a link to <address>"
+    /// without holding the form state.
+    pub email: String,
+}
+
 /// What the client learns about the signed-in account. No password material,
 /// not even the hash — this crosses the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]

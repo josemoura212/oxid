@@ -65,15 +65,25 @@ pub struct Message {
     pub html: String,
 }
 
-/// Builds `<site>/<path>?token=<token>`.
+/// Builds `<site>/#<kind>=<token>` — the site root, token in the **fragment**.
 ///
-/// The token rides in the query rather than the path because a path segment ends
-/// up in more places verbatim — proxy access logs, referrer headers on any
-/// outbound link from the landing page. Neither is a real leak for a single-use
-/// token with a short life, and the cheaper habit is still the right one.
-fn link(site_url: &str, path: &str, token: &str) -> String {
+/// **The root, not a path, and that is a constraint rather than a preference.**
+/// The front end is a single static page with no router, and nginx deliberately
+/// refuses to serve `index.html` for unknown paths: a catch-all fallback would
+/// answer 200 for a shortcode that reached the wrong service, hiding the
+/// misrouting behind a blank page. `/verify-email` would land on the API, match
+/// `/{code}`, and 404.
+///
+/// **The fragment, not the query, and that is a security decision.** A fragment
+/// is never sent to a server. In the query, every click on a reset link wrote
+/// `GET /?reset=<token>` into the nginx access log in plain text — and a reset
+/// token stays valid between the click and the submit, because opening only
+/// checks it. Anyone who could read pod logs could take the account over before
+/// the person finished typing. It also keeps the token out of the `Referer` of
+/// any outbound click and out of the API's own request spans.
+fn link(site_url: &str, kind: &str, token: &str) -> String {
     let site = site_url.trim_end_matches('/');
-    format!("{site}/{path}?token={token}")
+    format!("{site}/#{kind}={token}")
 }
 
 /// The line every message ends on. One place, so the three cannot drift.
@@ -110,7 +120,7 @@ fn as_text(paragraphs: &[&str], url: Option<&str>, lang: Lang) -> String {
 impl Message {
     /// The confirmation link for a freshly created account.
     pub fn confirm(to: &str, site_url: &str, token: &str, lang: Lang) -> Self {
-        let url = link(site_url, "verify-email", token);
+        let url = link(site_url, "verify", token);
 
         let (subject, eyebrow, title, body, label) = match lang {
             Lang::Pt => (
@@ -199,7 +209,7 @@ impl Message {
     /// expired is indistinguishable from one that never worked, and the difference
     /// decides whether someone asks for another or gives up.
     pub fn reset(to: &str, site_url: &str, token: &str, hours: u64, lang: Lang) -> Self {
-        let url = link(site_url, "reset-password", token);
+        let url = link(site_url, "reset", token);
 
         let (subject, eyebrow, title, first, second, label) = match lang {
             Lang::Pt => (
@@ -268,7 +278,7 @@ mod tests {
         let with = Message::confirm("a@b.test", "https://oxid.uk/", "tok", Lang::Pt);
         let without = Message::confirm("a@b.test", "https://oxid.uk", "tok", Lang::Pt);
 
-        assert!(with.text.contains("https://oxid.uk/verify-email?token=tok"));
+        assert!(with.text.contains("https://oxid.uk/#verify=tok"));
         assert_eq!(with.text, without.text);
     }
 
@@ -279,9 +289,8 @@ mod tests {
         let message = Message::already_registered("a@b.test", "https://oxid.uk", Lang::Pt);
 
         for part in [&message.text, &message.html] {
-            assert!(!part.contains("token="));
-            assert!(!part.contains("verify-email"));
-            assert!(!part.contains("reset-password"));
+            assert!(!part.contains("#verify="));
+            assert!(!part.contains("#reset="));
         }
     }
 
@@ -301,12 +310,18 @@ mod tests {
     /// disabled mailer's log, which is how the flow is tested by hand.
     #[test]
     fn the_link_is_in_the_text_part_as_well_as_the_html() {
-        for message in [
-            Message::confirm("a@b.test", "https://oxid.uk", "tok", Lang::Pt),
-            Message::reset("a@b.test", "https://oxid.uk", "tok", 2, Lang::Pt),
+        for (message, query) in [
+            (
+                Message::confirm("a@b.test", "https://oxid.uk", "tok", Lang::Pt),
+                "#verify=tok",
+            ),
+            (
+                Message::reset("a@b.test", "https://oxid.uk", "tok", 2, Lang::Pt),
+                "#reset=tok",
+            ),
         ] {
-            assert!(message.text.contains("token=tok"), "{}", message.subject);
-            assert!(message.html.contains("token=tok"), "{}", message.subject);
+            assert!(message.text.contains(query), "{}", message.subject);
+            assert!(message.html.contains(query), "{}", message.subject);
         }
     }
 

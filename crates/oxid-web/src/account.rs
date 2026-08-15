@@ -10,7 +10,7 @@ use crate::{
     api,
     app::copy_to_clipboard,
     i18n::{Locale, Strings},
-    storage::SavedLink,
+    storage::{self, SavedLink},
 };
 
 /// Which form the dialog is showing. Two modes rather than two dialogs: the
@@ -19,6 +19,26 @@ use crate::{
 pub enum Mode {
     SignIn,
     SignUp,
+}
+
+/// What the account dialog is doing right now.
+///
+/// Signing up used to end with a session, so the dialog only ever had one screen.
+/// Now it ends with a message in an inbox, and the screens after that — "check
+/// your inbox", "forgot my password", "a link is on its way" — are states of the
+/// same dialog rather than dialogs of their own. They share the panel, the veil
+/// and the close button, and none of them is worth its own component.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// The credentials form, in whichever `Mode` is selected.
+    Form,
+    /// After a signup. Deliberately says a message was sent, never that an
+    /// account was created — the server answers the same either way.
+    Sent,
+    /// The address-only form behind "forgot your password".
+    Forgot,
+    /// After asking for a reset. Conditional wording, for the same reason.
+    ForgotSent,
 }
 
 /// Everything the page needs to know about who is signed in.
@@ -88,25 +108,49 @@ impl Account {
 /// in — the import is a convenience, and blocking the screen on it would trade a
 /// working session for an error nobody can act on. The local list is untouched
 /// either way, so nothing is lost.
-async fn import_saved(account: Account, saved: Vec<SavedLink>) {
-    if saved.is_empty() {
-        return;
-    }
+async fn import_saved(account: Account, links: RwSignal<Vec<SavedLink>>) {
+    let saved = links.get_untracked();
 
-    let urls: Vec<String> = saved.into_iter().map(|link| link.long_url).collect();
+    if !saved.is_empty() {
+        let urls: Vec<String> = saved.into_iter().map(|link| link.long_url).collect();
 
-    match api::import(urls).await {
-        Ok(result) => {
-            if result.imported > 0 {
-                account.imported.set(true);
+        match api::import(urls).await {
+            Ok(result) => {
+                if result.imported > 0 {
+                    account.imported.set(true);
+                }
+                if result.rejected > 0 {
+                    leptos::logging::warn!("{} saved links were rejected", result.rejected);
+                }
+
+                // **Cleared on success, and this is a fix rather than tidiness.**
+                // Nothing else ever empties the browser list, so leaving it here
+                // meant every sign-in re-sent the whole thing: dozens of round
+                // trips to Postgres holding one connection from a pool of eight,
+                // and `imported` flipping true again — which is what made the
+                // "your saved links moved into the account" note reappear on
+                // every visit, the exact opposite of what its own doc promises.
+                //
+                // Safe because the import already happened: the links are in the
+                // account, and the account list is what renders from here on.
+                links.set(Vec::new());
+                if let Err(error) = storage::save(&[]) {
+                    // Only cosmetic if it fails — the next sign-in re-imports,
+                    // which is wasteful but not wrong, since the import is
+                    // idempotent per owner.
+                    leptos::logging::warn!("could not clear the saved links: {error}");
+                }
             }
-            if result.rejected > 0 {
-                leptos::logging::warn!("{} saved links were rejected", result.rejected);
-            }
+            Err(error) => leptos::logging::warn!("could not import saved links: {error}"),
         }
-        Err(error) => leptos::logging::warn!("could not import saved links: {error}"),
     }
 
+    // Outside the guard, and that placement is the fix for a real bug. This used
+    // to return early on an empty list, which was harmless while sign-in called
+    // `reload` itself. Once sign-in started going through here — the only moment
+    // a fresh account can still import, now that signup does not sign anyone in
+    // — the early return meant signing in from a browser with nothing saved
+    // loaded no links at all.
     account.reload().await;
 }
 
@@ -384,6 +428,322 @@ fn DialogActions(
     }
 }
 
+/// "We sent a message to this address."
+///
+/// Reached two ways: right after a signup, and after a sign-in refused because
+/// the address was never confirmed. The second route is the one that matters —
+/// without it, anyone who lost the first message had a 403 and nowhere to go.
+#[component]
+fn SentPanel(
+    locale: Signal<Locale>,
+    email: ReadSignal<String>,
+    note: RwSignal<Option<&'static str>>,
+    error: RwSignal<Option<String>>,
+    resend: Callback<()>,
+    back: Callback<()>,
+) -> impl IntoView {
+    view! {
+        <div class="panel-body">
+            <p class="note">{move || locale.get().strings().check_inbox_body}</p>
+            <p class="secret-value">{move || email.get()}</p>
+
+            <Show when=move || note.get().is_some()>
+                <p class="status" role="status">
+                    {move || locale.get().strings().resend_sent}
+                </p>
+            </Show>
+            <Show when=move || error.get().is_some()>
+                <p class="status status--error" role="alert">
+                    {move || error.get()}
+                </p>
+            </Show>
+        </div>
+        <div class="panel-foot">
+            <button class="btn--link" type="button" on:click=move |_| resend.run(())>
+                {move || locale.get().strings().resend}
+            </button>
+            <button class="btn--link" type="button" on:click=move |_| back.run(())>
+                {move || locale.get().strings().back_to_sign_in}
+            </button>
+        </div>
+    }
+}
+
+/// The address-only form behind "forgot your password".
+#[component]
+fn ForgotPanel(
+    locale: Signal<Locale>,
+    email: ReadSignal<String>,
+    set_email: WriteSignal<String>,
+    error: RwSignal<Option<String>>,
+    submit: Callback<()>,
+    back: Callback<()>,
+) -> impl IntoView {
+    view! {
+        <form
+            method="post"
+            action="/v1/forgot-password"
+            on:submit=move |ev| {
+                ev.prevent_default();
+                submit.run(());
+            }
+        >
+            <div class="panel-body">
+                <div class="stack">
+                    <p class="note">{move || locale.get().strings().forgot_body}</p>
+
+                    <Show when=move || error.get().is_some()>
+                        <p class="status status--error" role="alert">
+                            {move || error.get()}
+                        </p>
+                    </Show>
+
+                    <label class="field" for="forgot-email">
+                        <span class="field-label">
+                            {move || locale.get().strings().email_label}
+                        </span>
+                        <input
+                            id="forgot-email"
+                            class="field-input"
+                            type="email"
+                            name="email"
+                            autocomplete="email"
+                            required
+                            prop:value=move || email.get()
+                            on:input=move |ev| set_email.set(event_target_value(&ev))
+                        />
+                    </label>
+                </div>
+            </div>
+            <div class="panel-foot">
+                <button class="btn" type="submit">
+                    {move || locale.get().strings().forgot_send}
+                </button>
+                <button class="btn--link" type="button" on:click=move |_| back.run(())>
+                    {move || locale.get().strings().back_to_sign_in}
+                </button>
+            </div>
+        </form>
+    }
+}
+
+/// The credentials form, in whichever mode is selected.
+#[component]
+fn CredentialsPanel(
+    locale: Signal<Locale>,
+    mode: RwSignal<Mode>,
+    email: ReadSignal<String>,
+    set_email: WriteSignal<String>,
+    password: ReadSignal<String>,
+    set_password: WriteSignal<String>,
+    confirm: ReadSignal<String>,
+    set_confirm: WriteSignal<String>,
+    error: RwSignal<Option<String>>,
+    note: RwSignal<Option<&'static str>>,
+    pending: Signal<bool>,
+    submit: Callback<()>,
+    forgot: Callback<()>,
+    resend: Callback<()>,
+) -> impl IntoView {
+    view! {
+        <form
+            // Declared even though the submit is intercepted. Password managers
+            // look for a form that posts somewhere before they offer to save a
+            // credential — a form with neither method nor action reads as a
+            // widget, not a login. The path is the real endpoint, so if scripting
+            // ever fails the browser posts to something that exists.
+            method="post"
+            action=move || match mode.get() {
+                Mode::SignIn => "/v1/login",
+                Mode::SignUp => "/v1/signup",
+            }
+            on:submit=move |ev| {
+                ev.prevent_default();
+                submit.run(());
+            }
+        >
+            <div class="panel-body">
+                <div class="stack">
+                    <CredentialsFields
+                        locale=locale
+                        mode=mode
+                        email=email
+                        set_email=set_email
+                        password=password
+                        set_password=set_password
+                        confirm=confirm
+                        set_confirm=set_confirm
+                    />
+
+                    <Show when=move || error.get().is_some()>
+                        <p class="status status--error" role="alert">
+                            {move || error.get()}
+                        </p>
+                    </Show>
+                    <Show when=move || note.get().is_some()>
+                        <p class="status" role="status">
+                            {move || locale.get().strings().resend_sent}
+                        </p>
+                    </Show>
+
+                    // Only on sign-in: offering these while someone is creating an
+                    // account answers questions they have not asked.
+                    //
+                    // The resend is offered **unconditionally**, not in reaction to
+                    // a failed sign-in. Showing it only for an unconfirmed address
+                    // would put the oracle back in the interface after the API gave
+                    // it up: the button appearing would mean "this address has an
+                    // account, and it is unconfirmed".
+                    <Show when=move || mode.get() == Mode::SignIn>
+                        <button class="btn--link" type="button" on:click=move |_| forgot.run(())>
+                            {move || locale.get().strings().forgot_password}
+                        </button>
+                        <button class="btn--link" type="button" on:click=move |_| resend.run(())>
+                            {move || locale.get().strings().resend_hint}
+                        </button>
+                    </Show>
+                </div>
+            </div>
+
+            <DialogActions locale=locale mode=mode error=error pending=pending />
+        </form>
+    }
+}
+
+/// Everything the four stages need, so the branch can move out of the component.
+#[derive(Clone, Copy)]
+struct Screen {
+    locale: Signal<Locale>,
+    stage: RwSignal<Stage>,
+    mode: RwSignal<Mode>,
+    note: RwSignal<Option<&'static str>>,
+    error: RwSignal<Option<String>>,
+    email: ReadSignal<String>,
+    set_email: WriteSignal<String>,
+    password: ReadSignal<String>,
+    set_password: WriteSignal<String>,
+    confirm: ReadSignal<String>,
+    set_confirm: WriteSignal<String>,
+    pending: Signal<bool>,
+    submit: Callback<()>,
+    resend: Callback<()>,
+    forgot: Callback<()>,
+    to_sign_in: Callback<()>,
+}
+
+/// Which of the four panels is on screen.
+fn stage_view(screen: &Screen) -> AnyView {
+    let Screen {
+        locale,
+        stage,
+        mode,
+        note,
+        error,
+        email,
+        set_email,
+        password,
+        set_password,
+        confirm,
+        set_confirm,
+        pending,
+        submit,
+        resend,
+        forgot,
+        to_sign_in,
+    } = *screen;
+
+    match stage.get() {
+        Stage::Sent => view! {
+            <SentPanel
+                locale=locale
+                email=email
+                note=note
+                error=error
+                resend=resend
+                back=to_sign_in
+            />
+        }
+        .into_any(),
+        Stage::ForgotSent => view! { <ForgotSentPanel locale=locale back=to_sign_in /> }.into_any(),
+        Stage::Forgot => view! {
+            <ForgotPanel
+                locale=locale
+                email=email
+                set_email=set_email
+                error=error
+                submit=forgot
+                back=to_sign_in
+            />
+        }
+        .into_any(),
+        Stage::Form => view! {
+            <CredentialsPanel
+                locale=locale
+                mode=mode
+                email=email
+                set_email=set_email
+                password=password
+                set_password=set_password
+                confirm=confirm
+                set_confirm=set_confirm
+                error=error
+                note=note
+                pending=pending
+                submit=submit
+                forgot=Callback::new(move |()| {
+                    error.set(None);
+                    stage.set(Stage::Forgot);
+                })
+                resend=resend
+            />
+        }
+        .into_any(),
+    }
+}
+
+/// The dialog's heading, which is the one thing that varies across all four
+/// stages. Out of line so the component body reads as four branches rather than
+/// four branches plus a fifth match.
+fn dialog_title(locale: Signal<Locale>, stage: RwSignal<Stage>, mode: RwSignal<Mode>) -> String {
+    let strings = locale.get().strings();
+
+    match stage.get() {
+        Stage::Sent => strings.check_inbox_title.to_owned(),
+        Stage::Forgot | Stage::ForgotSent => strings.forgot_title.to_owned(),
+        Stage::Form if mode.get() == Mode::SignIn => strings.sign_in.to_owned(),
+        Stage::Form => strings.sign_up.to_owned(),
+    }
+}
+
+/// "If that address has an account, a link is on its way."
+///
+/// The wording stays conditional whatever happens, so reaching this screen says
+/// nothing about the address — which is the only reason it can be shown at all.
+#[component]
+fn ForgotSentPanel(locale: Signal<Locale>, back: Callback<()>) -> impl IntoView {
+    view! {
+        <div class="panel-body">
+            <p class="note">{move || locale.get().strings().forgot_sent}</p>
+        </div>
+        <div class="panel-foot">
+            <button class="btn--link" type="button" on:click=move |_| back.run(())>
+                {move || locale.get().strings().back_to_sign_in}
+            </button>
+        </div>
+    }
+}
+
+/// The three requests the dialog can make, built together.
+///
+/// Extracted from the component because the body had grown past what anyone
+/// reads in one pass — and because these three share every signal they touch, so
+/// they belong next to each other rather than interleaved with markup.
+struct Requests {
+    submit: Action<(), ()>,
+    resend: Action<(), ()>,
+    forgot: Action<(), ()>,
+}
+
 #[component]
 pub fn AccountDialog(
     account: Account,
@@ -392,11 +752,112 @@ pub fn AccountDialog(
     saved: RwSignal<Vec<SavedLink>>,
 ) -> impl IntoView {
     let mode = RwSignal::new(Mode::SignIn);
+    let stage = RwSignal::new(Stage::Form);
     let (email, set_email) = signal(String::new());
     let (password, set_password) = signal(String::new());
     let (confirm, set_confirm) = signal(String::new());
     let error = RwSignal::new(Option::<String>::None);
+    let note = RwSignal::new(Option::<&'static str>::None);
 
+    let Requests {
+        submit,
+        resend,
+        forgot,
+    } = requests(
+        account,
+        locale,
+        open,
+        saved,
+        stage,
+        mode,
+        note,
+        error,
+        email,
+        password,
+        confirm,
+        set_password,
+        set_confirm,
+    );
+
+    let pending = submit.pending();
+
+    // Leaving resets the dialog. Without this, closing on "check your inbox" and
+    // reopening lands back on that screen with no way to reach the form.
+    let dismiss = move || {
+        open.set(false);
+        stage.set(Stage::Form);
+        error.set(None);
+        note.set(None);
+    };
+
+    let to_sign_in = Callback::new(move |()| {
+        error.set(None);
+        note.set(None);
+        mode.set(Mode::SignIn);
+        stage.set(Stage::Form);
+    });
+
+    let screen = Screen {
+        locale,
+        stage,
+        mode,
+        note,
+        error,
+        email,
+        set_email,
+        password,
+        set_password,
+        confirm,
+        set_confirm,
+        pending: Signal::derive(move || pending.get()),
+        submit: Callback::new(move |()| {
+            submit.dispatch(());
+        }),
+        resend: Callback::new(move |()| {
+            resend.dispatch(());
+        }),
+        forgot: Callback::new(move |()| {
+            forgot.dispatch(());
+        }),
+        to_sign_in,
+    };
+
+    view! {
+        <Show when=move || open.get()>
+            <Panel
+                eyebrow=Signal::derive(move || locale.get().strings().account_dialog.to_owned())
+                title=Signal::derive(move || dialog_title(locale, stage, mode))
+                close_label=Signal::derive(move || locale.get().strings().close.to_owned())
+                close=Callback::new(move |()| dismiss())
+            >
+                {move || stage_view(&screen)}
+            </Panel>
+        </Show>
+    }
+}
+
+/// Built outside the component for the reason above. Every argument is a signal,
+/// so this is plumbing rather than state — the state still lives in the dialog.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every one is a signal the three actions share; grouping them into a \
+              struct would be the same list with an extra name in front of it"
+)]
+fn requests(
+    account: Account,
+    locale: Signal<Locale>,
+    open: RwSignal<bool>,
+    saved: RwSignal<Vec<SavedLink>>,
+    stage: RwSignal<Stage>,
+    mode: RwSignal<Mode>,
+    note: RwSignal<Option<&'static str>>,
+    error: RwSignal<Option<String>>,
+    email: ReadSignal<String>,
+    password: ReadSignal<String>,
+    confirm: ReadSignal<String>,
+    set_password: WriteSignal<String>,
+    set_confirm: WriteSignal<String>,
+) -> Requests {
     let submit = Action::new_local(move |(): &()| {
         let email = email.get();
         let password = password.get();
@@ -420,12 +881,27 @@ pub fn AccountDialog(
                 return;
             }
 
-            let result = match mode {
-                Mode::SignIn => api::login(email, password).await,
-                Mode::SignUp => api::signup(email, password).await,
-            };
+            if mode == Mode::SignUp {
+                // Signing up no longer signs anyone in: there is no session to
+                // take, and the address is unconfirmed. What comes back is only
+                // an acknowledgement that a message was sent — and the front end
+                // must not try to be more specific, because the server
+                // deliberately answers the same for an address that already has
+                // an account.
+                match api::signup(email, password).await {
+                    Ok(_) => {
+                        error.set(None);
+                        note.set(None);
+                        set_password.set(String::new());
+                        set_confirm.set(String::new());
+                        stage.set(Stage::Sent);
+                    }
+                    Err(message) => error.set(Some(message)),
+                }
+                return;
+            }
 
-            match result {
+            match api::login(email, password).await {
                 Ok(response) => {
                     error.set(None);
                     account.user.set(Some(Some(response.id)));
@@ -437,85 +913,66 @@ pub fn AccountDialog(
                     set_password.set(String::new());
                     set_confirm.set(String::new());
 
-                    // Only a fresh account imports. Signing in on a second
-                    // device would otherwise re-import that browser's list
-                    // every time, creating nothing new but reloading for no
-                    // reason.
-                    if mode == Mode::SignUp {
-                        import_saved(account, saved.get()).await;
-                    } else {
-                        account.reload().await;
-                    }
+                    // The saved-links import used to run on signup, which is
+                    // where a fresh account appeared. It now runs at sign-in,
+                    // which is the first moment an account exists to import
+                    // into — and it clears the browser list on success, so this
+                    // does not repeat on every visit.
+                    import_saved(account, saved).await;
+                }
+                // Deliberately just a message. A sign-in that fails because the
+                // address was never confirmed answers the same 401 as a wrong
+                // password — telling them apart is the enumeration oracle this
+                // flow gives up a 409 to close. The way out for someone who
+                // never confirmed is the resend link below, which is offered
+                // unconditionally so the offer itself says nothing either.
+                Err(message) => error.set(Some(message)),
+            }
+        }
+    });
+
+    // **The transport result is not the address result, and conflating them was a
+    // bug.** The server already answers an identical 204 for a known and an
+    // unknown address, so the anonymity lives entirely there; nothing is leaked by
+    // admitting the request never arrived. Swallowing it only meant a 429 from the
+    // e-mail rate limit — one per second, burst of three, so the fourth click —
+    // showed "on its way" while nothing was sent.
+    let resend = Action::new_local(move |(): &()| {
+        let address = email.get();
+        async move {
+            match api::resend_verification(address).await {
+                Ok(()) => {
+                    error.set(None);
+                    note.set(Some("resend_sent"));
+                }
+                Err(message) => {
+                    note.set(None);
+                    error.set(Some(message));
+                }
+            }
+        }
+    });
+
+    let forgot = Action::new_local(move |(): &()| {
+        let address = email.get();
+        async move {
+            match api::forgot_password(address).await {
+                Ok(()) => {
+                    error.set(None);
+                    // The wording on that screen stays conditional — "if that
+                    // address has an account" — so reaching it still says nothing
+                    // about the address.
+                    stage.set(Stage::ForgotSent);
                 }
                 Err(message) => error.set(Some(message)),
             }
         }
     });
 
-    let pending = submit.pending();
-
-    view! {
-        <Show when=move || open.get()>
-            <Panel
-                eyebrow=Signal::derive(move || locale.get().strings().account_dialog.to_owned())
-                title=Signal::derive(move || {
-                    let strings = locale.get().strings();
-                    if mode.get() == Mode::SignIn {
-                        strings.sign_in.to_owned()
-                    } else {
-                        strings.sign_up.to_owned()
-                    }
-                })
-                close_label=Signal::derive(move || locale.get().strings().close.to_owned())
-                close=Callback::new(move |()| open.set(false))
-            >
-                <form
-                    // Declared even though the submit is intercepted. Password
-                    // managers look for a form that posts somewhere before they
-                    // offer to save a credential — a form with neither method
-                    // nor action reads as a widget, not a login. The path is the
-                    // real endpoint, so if scripting ever fails the browser
-                    // posts to something that exists.
-                    method="post"
-                    action=move || match mode.get() {
-                        Mode::SignIn => "/v1/login",
-                        Mode::SignUp => "/v1/signup",
-                    }
-                    on:submit=move |ev| {
-                        ev.prevent_default();
-                        submit.dispatch(());
-                    }
-                >
-                    <div class="panel-body">
-                        <div class="stack">
-                            <CredentialsFields
-                                locale=locale
-                                mode=mode
-                                email=email
-                                set_email=set_email
-                                password=password
-                                set_password=set_password
-                                confirm=confirm
-                                set_confirm=set_confirm
-                            />
-
-                            <Show when=move || error.get().is_some()>
-                                <p class="status status--error" role="alert">
-                                    {move || error.get()}
-                                </p>
-                            </Show>
-                        </div>
-                    </div>
-
-                    <DialogActions
-                        locale=locale
-                        mode=mode
-                        error=error
-                        pending=Signal::derive(move || pending.get())
-                    />
-                </form>
-            </Panel>
-        </Show>
+    Requests {
+        submit,
+        resend,
+        forgot,
     }
 }
 
@@ -874,7 +1331,14 @@ const LINE_COLORS: [&str; 8] = [
 /// different things to the callers: one clears which link is open, the other flips
 /// a boolean.
 #[component]
-fn Panel(
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "`ChildrenFn` is a boxed closure the `component` macro requires by \
+              value; it is called through `Show`, so the lint reads the indirection \
+              as never consuming it. Only surfaced once this became `pub` for the \
+              e-mail screens."
+)]
+pub fn Panel(
     /// What kind of thing this is — "Conta", "Dados do link".
     #[prop(into)]
     eyebrow: Signal<String>,
